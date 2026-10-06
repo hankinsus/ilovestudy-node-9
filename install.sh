@@ -3449,7 +3449,7 @@ EOF
         {
              "type": "direct",
              "tag": "${tag}",
-             "domain_strategy": "ipv4_only"
+             "domain_strategy": "prefer_ipv4"
         }
     ]
 }
@@ -3515,7 +3515,13 @@ EOF
         {
             "protocol":"freedom",
             "settings": {
-                "domainStrategy":"UseIPv4"
+                "domainStrategy":"UseIPv4v6"
+            },
+            "streamSettings": {
+                "sockopt": {
+                    "tcpKeepAliveIdle": 30,
+                    "tcpKeepAliveInterval": 15
+                }
             },
             "tag":"${tag}"
         }
@@ -3792,7 +3798,7 @@ installAimiliDefaultOutbound() {
           "version": "5",
           "username":"socks5",
           "password":"ilovestudy",
-          "domain_strategy": "ipv4_only"
+          "domain_strategy": "prefer_ipv4"
         }
     ]
 }
@@ -3980,14 +3986,17 @@ EOF
     fi
 
     if [[ ! -f "/etc/v2ray-agent/xray/conf/12_policy.json" ]]; then
-
-        cat <<EOF >/etc/v2ray-agent/xray/conf/12_policy.json
+        # 与 00_policy 相同。connIdle 0 表示不按空闲时间掐连接，靠 TCP keepalive 保活。
+        # 旧的随机 250–300 秒会在约 5 分钟后主动断开，并且文件名更靠后，会盖掉 00_policy。
+        cat <<'EOF' >/etc/v2ray-agent/xray/conf/12_policy.json
 {
   "policy": {
       "levels": {
           "0": {
-              "handshake": $((1 + RANDOM % 4)),
-              "connIdle": $((250 + RANDOM % 51))
+              "handshake": 4,
+              "connIdle": 0,
+              "uplinkOnly": 2,
+              "downlinkOnly": 5
           }
       }
   }
@@ -10056,7 +10065,7 @@ menu() {
     cd "$HOME" || exit
     echoContent red "\n=============================================================="
     echoContent green "署名：我爱研究.ilovestudy"
-    echoContent green "当前版本：V1.0.1"
+    echoContent green "当前版本：V1.0.2"
     echoContent green "描述：九合一共存脚本\c"
     showInstallStatus
     checkWgetShowProgress
@@ -10093,6 +10102,7 @@ menu() {
     echoContent red "=============================================================="
     mkdirTools
     aliasInstall
+    jiuheyiRepairKeepalive
     read -r -p "请选择:" selectInstallType
     case ${selectInstallType} in
     1)
@@ -10157,19 +10167,10 @@ menu() {
         ;;
     esac
 }
-# 不分流：本机解析，只查 IPv4。全局分流：解析和访问都走 AimiliVPN 8500。
-jiuheyiApplyDnsMode() {
-    local mode="${1:-}"
-    if [[ -z "${mode}" ]]; then
-        if [[ "${JIUHEYI_EGRESS:-}" == "aimili" ]]; then
-            mode="global"
-        else
-            mode="direct"
-        fi
-    fi
-    mkdir -p /etc/v2ray-agent/xray/conf
-    printf '%s\n' "${mode}" >/etc/v2ray-agent/jiuheyi_dns_mode
-    cat <<'EOF' >/etc/v2ray-agent/xray/conf/00_policy.json
+# 不分流：本机解析，IPv4 优先，没有 IPv4 再用 IPv6。全局分流：解析和访问都走 AimiliVPN 8500。
+# 分流规则本身不在这里改。11 里已经写好的 WARP / 自定义规则保持原样。
+jiuheyiPolicyJson() {
+    cat <<'EOF'
 {
   "policy": {
     "levels": {
@@ -10183,11 +10184,59 @@ jiuheyiApplyDnsMode() {
   }
 }
 EOF
+}
+
+# 只修保活。不改 11 里的分流规则，也不改 DNS 模式文件。
+# 12_policy 按文件名排在 00_policy 后面，Xray 合并时以后者为准，所以两份必须一样。
+# 内容有变化才重载一次，避免每次打开菜单都打断连接。
+jiuheyiRepairKeepalive() {
+    if [[ -d /etc/v2ray-agent/xray/conf ]]; then
+        local policy
+        policy="$(jiuheyiPolicyJson)"
+        local current=""
+        if [[ -f /etc/v2ray-agent/xray/conf/12_policy.json ]]; then
+            current="$(cat /etc/v2ray-agent/xray/conf/12_policy.json 2>/dev/null || true)"
+        fi
+        if [[ "${current}" != "${policy}" ]]; then
+            printf '%s\n' "${policy}" >/etc/v2ray-agent/xray/conf/00_policy.json
+            printf '%s\n' "${policy}" >/etc/v2ray-agent/xray/conf/12_policy.json
+            if [[ -x /etc/v2ray-agent/xray/xray ]] && [[ -n $(pgrep -f "xray/xray" || true) ]]; then
+                echoContent yellow " ---> 空闲连接不再按约 5 分钟断开，正在重载 Xray 一次"
+                handleXray stop
+                handleXray start
+            fi
+        fi
+    fi
+    if [[ -f /etc/v2ray-agent/sing-box/conf/config.json ]] && command -v jq >/dev/null 2>&1; then
+        if ! grep -q '"tcp_keep_alive"' /etc/v2ray-agent/sing-box/conf/config.json; then
+            tuneJiuheyiRuntime
+            if [[ -n $(pgrep -f "sing-box/sing-box" || true) ]]; then
+                echoContent yellow " ---> 已写回 sing-box 入站保活，正在重载一次"
+                handleSingBox stop
+                handleSingBox start
+            fi
+        fi
+    fi
+}
+
+jiuheyiApplyDnsMode() {
+    local mode="${1:-}"
+    if [[ -z "${mode}" ]]; then
+        if [[ "${JIUHEYI_EGRESS:-}" == "aimili" ]]; then
+            mode="global"
+        else
+            mode="direct"
+        fi
+    fi
+    mkdir -p /etc/v2ray-agent/xray/conf
+    printf '%s\n' "${mode}" >/etc/v2ray-agent/jiuheyi_dns_mode
+    printf '%s\n' "$(jiuheyiPolicyJson)" >/etc/v2ray-agent/xray/conf/00_policy.json
+    printf '%s\n' "$(jiuheyiPolicyJson)" >/etc/v2ray-agent/xray/conf/12_policy.json
     if [[ "${mode}" != "global" ]]; then
         cat <<'EOF' >/etc/v2ray-agent/xray/conf/00_dns.json
 {
   "dns": {
-    "queryStrategy": "UseIPv4",
+    "queryStrategy": "UseIPv4v6",
     "servers": ["1.1.1.1", "8.8.8.8"]
   }
 }
@@ -10198,7 +10247,7 @@ EOF
     cat <<'EOF' >/etc/v2ray-agent/xray/conf/00_dns.json
 {
   "dns": {
-    "queryStrategy": "UseIPv4",
+    "queryStrategy": "UseIPv4v6",
     "servers": [
       {
         "address": "1.1.1.1",
@@ -10235,7 +10284,7 @@ EOF
     cat <<'EOF' >/etc/v2ray-agent/xray/conf/zz_egress.json
 {
   "routing": {
-    "domainStrategy": "UseIPv4",
+    "domainStrategy": "UseIPv4v6",
     "rules": [
       {
         "type": "field",
@@ -10264,7 +10313,7 @@ jiuheyiDnsMenu() {
     fi
     echoContent red "\n=============================================================="
     echoContent green "当前 DNS：${current}"
-    echoContent yellow "1.不分流。本机解析，只查 IPv4，流量不走 8500"
+    echoContent yellow "1.不分流。本机解析，IPv4 优先，没有 IPv4 再用 IPv6，流量不走 8500"
     echoContent yellow "2.全局分流。DNS 和访问都走 AimiliVPN 127.0.0.1:8500"
     echoContent yellow "3.自定义分流"
     echoContent red "=============================================================="

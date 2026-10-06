@@ -1,7 +1,7 @@
 # 九合一安装文档
 
 署名：我爱研究.ilovestudy  
-版本：V1.0.1
+版本：V1.0.2
 
 九合一是客户端入口。八个入站协议还在，第 9 项是可选的 AimiliVPN 出口。功能菜单没有删，只收紧了一键安装和转发性能。这个仓库只放九合一，不和 AimiliVPN 的源码放在一起。
 
@@ -26,9 +26,11 @@ bash <(curl -Ls https://raw.githubusercontent.com/ilovestudyus-sketch/ilovestudy
 
 ## 内核和端口
 
-一键默认用 **Xray**，不用 sing-box。
+一键默认用 **Xray**，不用 sing-box 当主转发。
 
-sing-box 的 DNS 分流会同时查 IPv6，规则和出口又经常不一致，结果是多一次解析、多一次失败。这台链路本身是 IPv4。一键安装改为 Xray，DNS 使用 `UseIPv4`，不再做域名分流。
+sing-box 协议更多（Hysteria2、TUIC 都在它上面），但主路径仍用 Xray VLESS Reality：TCP、开销小、延迟低、客户端最稳。UDP 协议在丢包网络上更快，也更容易被掐，而且更吃 CPU。所以 Hysteria2、TUIC 继续只在 `vasma` 里按需装，不进一键。
+
+后面的机器公网同时有 IPv4 和 IPv6。解析改成 **IPv4 优先，没有 IPv4 再用 IPv6**（Xray `UseIPv4v6`，sing-box `prefer_ipv4`）。不再只查 A 记录，也不再让 AAAA 抢在前面。11 里已经配好的 WARP、Socks5、自定义分流规则不动。要换这台机器的 DNS 模式，进 `vasma` 选 **19**。
 
 | 项目 | 默认 | 原因 |
 | --- | --- | --- |
@@ -47,9 +49,9 @@ sing-box 的 DNS 分流会同时查 IPv6，规则和出口又经常不一致，�
 
 ## DNS
 
-- 只装九合一：DNS **不分流**。在服务器本机解析，只查 IPv4，流量不进 8500。
+- 只装九合一：DNS **不分流**。在服务器本机解析，IPv4 优先，没有 IPv4 再用 IPv6，流量不进 8500。
 - 同时安装 AimiliVPN：DNS **全局分流**。解析和访问都走 `127.0.0.1:8500`。伪装域名 www.apple.com 仍直连，避免 Reality 握手绕进代理。
-- 以后要改：执行 `vasma`，选 **19.DNS模式**。也可以进「自定义分流」做原来的分流规则。
+- 以后要改：执行 `vasma`，选 **19.DNS模式**。11 里的分流工具继续管原来的规则，这次没有改它的功能。
 
 AimiliVPN 的管理页是 `https://IP或域名:8443/`。九合一不占用 8443 和 8500。
 
@@ -64,9 +66,9 @@ vasma
 ## 这次做了的性能修改
 
 - 去掉菜单推广和全部上游教程链接。说明只保留这一份。
-- Xray 空闲连接不主动断开，TCP keepalive 30 秒。
-- DNS 只查 IPv4，减少 AAAA 失败造成的延迟。
-- sing-box 如果以后从菜单安装，探测超时从 1 秒降到 300 毫秒，直连也只走 IPv4。
+- Xray 空闲连接不主动断开。`connIdle` 为 0。原先 `12_policy.json` 用随机 250–300 秒，而且文件名排在后面，会把这份保活盖掉。第一次执行 `vasma` 时如果策略还是旧的，会重载一次 Xray。
+- TCP keepalive 仍是空闲 30 秒、间隔 15 秒。sing-box 入站如果还没有 `tcp_keep_alive`，同一次 `vasma` 会补上并重载一次。
+- 新安装的直连出口是 IPv4 优先、必要时 IPv6。已经写在 11 里的分流规则不会被改写。
 - 脚本更新只从本仓库拉取，不会装回带推广内容的上游脚本。
 
 ## 仓库
