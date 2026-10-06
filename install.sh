@@ -2,7 +2,8 @@
 # 九合一 V1.0.1
 # 署名: 我爱研究.ilovestudy
 # 独立仓库：https://github.com/hankinsus/ilovestudy-node-9
-# 一键默认 Xray Reality 443，伪装 www.apple.com，订阅 18443。
+# 一键默认 Xray Reality XHTTP，伪装不选则用 www.microsoft.com，订阅 18443。
+# sing-box 只加 gRPC 和 Hysteria2，不装全部协议。
 # 联合安装 AimiliVPN 时，出站为 127.0.0.1:8500，用户 socks5，密码 ilovestudy。
 # 检测区
 # -------------------------------------------------------------
@@ -431,7 +432,7 @@ readInstallType() {
                 if [[ -f "${configPath}12_VLESS_XHTTP_inbounds.json" ]]; then
                     realityStatus=12
                 fi
-                if [[ -f "/etc/v2ray-agent/sing-box/sing-box" ]] && [[ -f "/etc/v2ray-agent/sing-box/conf/config/06_hysteria2_inbounds.json" || -f "/etc/v2ray-agent/sing-box/conf/config/09_tuic_inbounds.json" || -f "/etc/v2ray-agent/sing-box/conf/config/20_socks5_inbounds.json" ]]; then
+                if [[ -f "/etc/v2ray-agent/sing-box/sing-box" ]] && [[ -f "/etc/v2ray-agent/sing-box/conf/config/06_hysteria2_inbounds.json" || -f "/etc/v2ray-agent/sing-box/conf/config/08_VLESS_vision_gRPC_inbounds.json" || -f "/etc/v2ray-agent/sing-box/conf/config/09_tuic_inbounds.json" || -f "/etc/v2ray-agent/sing-box/conf/config/20_socks5_inbounds.json" ]]; then
                     singBoxConfigPath=/etc/v2ray-agent/sing-box/conf/config/
                 fi
             fi
@@ -3041,15 +3042,19 @@ initHysteriaPort() {
 # 初始化hysteria网络信息
 initHysteria2Network() {
 
-    echoContent yellow "请输入本地带宽峰值的下行速度（默认：100，单位：Mbps）"
-    read -r -p "下行速度:" hysteria2ClientDownloadSpeed
+    if [[ -z "${hysteria2ClientDownloadSpeed}" || -z "${hysteria2ClientUploadSpeed}" ]]; then
+        echoContent yellow "请输入本地带宽峰值的下行速度（默认：100，单位：Mbps）"
+        read -r -p "下行速度:" hysteria2ClientDownloadSpeed
+    fi
     if [[ -z "${hysteria2ClientDownloadSpeed}" ]]; then
         hysteria2ClientDownloadSpeed=100
         echoContent green "\n ---> 下行速度: ${hysteria2ClientDownloadSpeed}\n"
     fi
 
-    echoContent yellow "请输入本地带宽峰值的上行速度（默认：50，单位：Mbps）"
-    read -r -p "上行速度:" hysteria2ClientUploadSpeed
+    if [[ -z "${hysteria2ClientUploadSpeed}" ]]; then
+        echoContent yellow "请输入本地带宽峰值的上行速度（默认：50，单位：Mbps）"
+        read -r -p "上行速度:" hysteria2ClientUploadSpeed
+    fi
     if [[ -z "${hysteria2ClientUploadSpeed}" ]]; then
         hysteria2ClientUploadSpeed=50
         echoContent green "\n ---> 上行速度: ${hysteria2ClientUploadSpeed}\n"
@@ -3449,7 +3454,7 @@ EOF
         {
              "type": "direct",
              "tag": "${tag}",
-             "domain_strategy": "prefer_ipv4"
+             "domain_strategy": "$(jiuheyiSingboxDomainStrategy)"
         }
     ]
 }
@@ -3515,7 +3520,7 @@ EOF
         {
             "protocol":"freedom",
             "settings": {
-                "domainStrategy":"UseIPv4v6"
+                "domainStrategy":"$(jiuheyiXrayQueryStrategy)"
             },
             "streamSettings": {
                 "sockopt": {
@@ -3787,7 +3792,7 @@ installAimiliDefaultOutbound() {
         return 0
     fi
     mkdir -p /etc/v2ray-agent/sing-box/conf/config
-    cat <<'EOF' >/etc/v2ray-agent/sing-box/conf/config/socks5_outbound.json
+    cat <<EOF >/etc/v2ray-agent/sing-box/conf/config/socks5_outbound.json
 {
     "outbounds":[
         {
@@ -3798,7 +3803,7 @@ installAimiliDefaultOutbound() {
           "version": "5",
           "username":"socks5",
           "password":"ilovestudy",
-          "domain_strategy": "prefer_ipv4"
+          "domain_strategy": "$(jiuheyiSingboxDomainStrategy)"
         }
     ]
 }
@@ -3814,9 +3819,9 @@ tuneJiuheyiRuntime() {
     local tuned
     tuned=$(jq '
       .inbounds = ((.inbounds // []) | map(
-        . + {"tcp_keep_alive":"30s","tcp_keep_alive_interval":"15s","udp_timeout":"30m"}
+        . + {"tcp_keep_alive":"30s","tcp_keep_alive_interval":"15s","udp_timeout":"24h"}
         | if (.type == "hysteria2" or .type == "tuic")
-          then . + {"idle_timeout":"15m","keep_alive_period":"15s"}
+          then . + {"idle_timeout":"24h","keep_alive_period":"15s"}
           else .
           end
         | if .type == "tuic" then . + {"heartbeat":"10s"} else . end
@@ -3943,6 +3948,10 @@ initXrayConfig() {
     fi
 
     if [[ -z "${addClientsStatus}" ]]; then
+        if [[ "${AIMILI_SUITE:-}" == "1" ]]; then
+            uuid=$(/etc/v2ray-agent/xray/xray uuid)
+            customEmail="$(echo "${uuid}" | cut -d "-" -f 1)-XHTTP"
+        else
         echoContent yellow "请输入自定义UUID[需合法]，[回车]随机UUID"
         read -r -p 'UUID:' customUUID
 
@@ -3956,6 +3965,7 @@ initXrayConfig() {
         read -r -p '用户名:' customEmail
         if [[ -z ${customEmail} ]]; then
             customEmail="$(echo "${uuid}" | cut -d "-" -f 1)-VLESS_TCP/TLS_Vision"
+        fi
         fi
     fi
 
@@ -4125,6 +4135,10 @@ EOF
 	  "streamSettings": {
 		"network": "xhttp",
 		"security": "reality",
+		"sockopt": {
+			"tcpKeepAliveIdle": 30,
+			"tcpKeepAliveInterval": 15
+		},
 		"realitySettings": {
             "show": false,
             "target": "${realityServerName}:${realityDomainPort}",
@@ -9642,6 +9656,12 @@ initRealityKey() {
             realityPrivateKey=$(echo "${realityX25519Key}" | head -1 | awk '{print $2}')
             realityPublicKey=$(echo "${realityX25519Key}" | tail -n 1 | awk '{print $2}')
             echo "publicKey:${realityPublicKey}" >/etc/v2ray-agent/sing-box/conf/config/reality_key
+        elif [[ "${AIMILI_SUITE:-}" == "1" ]]; then
+            realityX25519Key=$(/etc/v2ray-agent/xray/xray x25519)
+            realityPrivateKey=$(echo "${realityX25519Key}" | grep "PrivateKey" | awk '{print $2}')
+            realityPublicKey=$(echo "${realityX25519Key}" | grep "Password" | awk '{print $3}')
+            echoContent green "\n privateKey:${realityPrivateKey}"
+            echoContent green "\n publicKey:${realityPublicKey}"
         else
             read -r -p "请输入Private Key[回车自动生成]:" historyPrivateKey
             if [[ -n "${historyPrivateKey}" ]]; then
@@ -9716,7 +9736,7 @@ checkRealityDest() {
 # 初始化客户端可用的ServersName
 initRealityClientServersName() {
     if [[ "${AIMILI_SUITE:-}" == "1" ]]; then
-        realityServerName="${realityServerName:-www.apple.com}"
+        realityServerName="${realityServerName:-www.microsoft.com}"
         realityDomainPort="${realityDomainPort:-443}"
         echoContent yellow "\n ---> 客户端可用域名: ${realityServerName}:${realityDomainPort}\n"
         return 0
@@ -9775,10 +9795,10 @@ initRealityClientServersName() {
             realityDomainPort=443
             echoContent skyBlue "\n================ 配置客户端可用的serverNames ===============\n"
             echoContent yellow "#注意事项"
-            echoContent yellow "回车默认 www.apple.com。要换成微软可填写 www.microsoft.com\n"
-            read -r -p "请输入目标域名，[回车]www.apple.com:" realityServerName
+            echoContent yellow "回车默认 www.microsoft.com。不要所有机器都用同一个伪装域名\n"
+            read -r -p "请输入目标域名，[回车]www.microsoft.com:" realityServerName
             if [[ -z "${realityServerName}" ]]; then
-                realityServerName="www.apple.com"
+                realityServerName="www.microsoft.com"
                 realityDomainPort=443
             fi
             if echo "${realityServerName}" | grep -q ":"; then
@@ -10065,11 +10085,11 @@ menu() {
     cd "$HOME" || exit
     echoContent red "\n=============================================================="
     echoContent green "署名：我爱研究.ilovestudy"
-    echoContent green "当前版本：V1.0.2"
+    echoContent green "当前版本：V1.0.3"
     echoContent green "描述：九合一共存脚本\c"
     showInstallStatus
     checkWgetShowProgress
-    echoContent green "\n默认：Xray Reality 443，伪装 www.apple.com。修改请执行 vasma"
+    echoContent green "\n默认：Xray XHTTP、sing-box gRPC、Hysteria2。伪装不选则用 www.microsoft.com"
     echoContent red "=============================================================="
     if [[ -n "${coreInstallType}" ]]; then
         echoContent yellow "1.重新安装"
@@ -10186,32 +10206,54 @@ jiuheyiPolicyJson() {
 EOF
 }
 
-# 只修保活。不改 11 里的分流规则，也不改 DNS 模式文件。
+# 只修保活。不改 11 里的分流规则，也不在打开菜单时改 DNS 模式。
 # 12_policy 按文件名排在 00_policy 后面，Xray 合并时以后者为准，所以两份必须一样。
-# 内容有变化才重载一次，避免每次打开菜单都打断连接。
+# connIdle 0：Xray 不按空闲时间掐连接。TCP keepalive 30 秒主动探测，
+# 不等到大约 300 秒，避免中间设备把空闲连接拆掉。内容有变化才重载一次。
 jiuheyiRepairKeepalive() {
+    local xray_changed=0
     if [[ -d /etc/v2ray-agent/xray/conf ]]; then
-        local policy
+        local policy current="" f tmp
         policy="$(jiuheyiPolicyJson)"
-        local current=""
         if [[ -f /etc/v2ray-agent/xray/conf/12_policy.json ]]; then
             current="$(cat /etc/v2ray-agent/xray/conf/12_policy.json 2>/dev/null || true)"
         fi
         if [[ "${current}" != "${policy}" ]]; then
             printf '%s\n' "${policy}" >/etc/v2ray-agent/xray/conf/00_policy.json
             printf '%s\n' "${policy}" >/etc/v2ray-agent/xray/conf/12_policy.json
-            if [[ -x /etc/v2ray-agent/xray/xray ]] && [[ -n $(pgrep -f "xray/xray" || true) ]]; then
-                echoContent yellow " ---> 空闲连接不再按约 5 分钟断开，正在重载 Xray 一次"
-                handleXray stop
-                handleXray start
-            fi
+            xray_changed=1
+        fi
+        if command -v jq >/dev/null 2>&1; then
+            for f in /etc/v2ray-agent/xray/conf/*inbounds*.json; do
+                [[ -f "${f}" ]] || continue
+                tmp="$(jq '
+                  if .inbounds then
+                    .inbounds |= map(
+                      if .streamSettings then
+                        .streamSettings.sockopt = ((.streamSettings.sockopt // {}) + {"tcpKeepAliveIdle":30,"tcpKeepAliveInterval":15})
+                      else . end
+                    )
+                  else . end
+                ' "${f}" 2>/dev/null || true)"
+                if [[ -n "${tmp}" && "$(cat "${f}")" != "${tmp}" ]]; then
+                    printf '%s\n' "${tmp}" >"${f}"
+                    xray_changed=1
+                fi
+            done
+        fi
+        if [[ "${xray_changed}" == "1" && -x /etc/v2ray-agent/xray/xray ]] && [[ -n $(pgrep -f "xray/xray" || true) ]]; then
+            echoContent yellow " ---> 持续保活已写入。空闲不主动断开，TCP 每 30 秒探测一次，正在重载 Xray 一次"
+            handleXray stop
+            handleXray start
         fi
     fi
     if [[ -f /etc/v2ray-agent/sing-box/conf/config.json ]] && command -v jq >/dev/null 2>&1; then
-        if ! grep -q '"tcp_keep_alive"' /etc/v2ray-agent/sing-box/conf/config.json; then
+        if ! grep -q '"udp_timeout": "24h"' /etc/v2ray-agent/sing-box/conf/config.json; then
+            local before
+            before="$(cat /etc/v2ray-agent/sing-box/conf/config.json 2>/dev/null || true)"
             tuneJiuheyiRuntime
-            if [[ -n $(pgrep -f "sing-box/sing-box" || true) ]]; then
-                echoContent yellow " ---> 已写回 sing-box 入站保活，正在重载一次"
+            if [[ "${before}" != "$(cat /etc/v2ray-agent/sing-box/conf/config.json 2>/dev/null || true)" ]] && [[ -n $(pgrep -f "sing-box/sing-box" || true) ]]; then
+                echoContent yellow " ---> 已写回 sing-box 持续保活，Hysteria2 每 15 秒主动心跳，正在重载一次"
                 handleSingBox stop
                 handleSingBox start
             fi
@@ -10219,8 +10261,119 @@ jiuheyiRepairKeepalive() {
     fi
 }
 
+jiuheyiIpStrategy() {
+    local mode="dual"
+    if [[ -s /etc/v2ray-agent/jiuheyi_ip_strategy ]]; then
+        mode="$(tr -d '[:space:]' </etc/v2ray-agent/jiuheyi_ip_strategy)"
+    fi
+    case "${mode}" in
+    ipv4 | ipv6 | dual) ;;
+    *) mode="dual" ;;
+    esac
+    printf '%s' "${mode}"
+}
+
+jiuheyiXrayQueryStrategy() {
+    case "$(jiuheyiIpStrategy)" in
+    ipv4) printf '%s' "UseIPv4" ;;
+    ipv6) printf '%s' "UseIPv6" ;;
+    *) printf '%s' "UseIPv4v6" ;;
+    esac
+}
+
+jiuheyiSingboxDomainStrategy() {
+    case "$(jiuheyiIpStrategy)" in
+    ipv4) printf '%s' "ipv4_only" ;;
+    ipv6) printf '%s' "ipv6_only" ;;
+    *) printf '%s' "prefer_ipv4" ;;
+    esac
+}
+
+jiuheyiIpStrategyLabel() {
+    case "$(jiuheyiIpStrategy)" in
+    ipv4) echo "仅 IPv4" ;;
+    ipv6) echo "仅 IPv6" ;;
+    *) echo "IPv4 和 IPv6 同时，IPv4 优先" ;;
+    esac
+}
+
+# 只改解析用的 IP 策略。11 里按 IPv4/IPv6 分开写的出站和分流规则不动。
+jiuheyiApplyIpStrategy() {
+    local mode="${1:-dual}"
+    case "${mode}" in
+    ipv4 | ipv6 | dual) ;;
+    *) mode="dual" ;;
+    esac
+    mkdir -p /etc/v2ray-agent
+    printf '%s\n' "${mode}" >/etc/v2ray-agent/jiuheyi_ip_strategy
+    local xray_strategy singbox_strategy f tmp changed_xray=0 changed_sing=0
+    xray_strategy="$(jiuheyiXrayQueryStrategy)"
+    singbox_strategy="$(jiuheyiSingboxDomainStrategy)"
+    if command -v jq >/dev/null 2>&1; then
+        f="/etc/v2ray-agent/xray/conf/00_dns.json"
+        if [[ -f "${f}" ]]; then
+            tmp="$(jq --arg s "${xray_strategy}" 'if .dns then .dns.queryStrategy=$s else . end' "${f}" 2>/dev/null || true)"
+            if [[ -n "${tmp}" && "$(cat "${f}")" != "${tmp}" ]]; then
+                printf '%s\n' "${tmp}" >"${f}"
+                changed_xray=1
+            fi
+        fi
+        f="/etc/v2ray-agent/xray/conf/zz_egress.json"
+        if [[ -f "${f}" ]]; then
+            tmp="$(jq --arg s "${xray_strategy}" 'if .routing.domainStrategy then .routing.domainStrategy=$s else . end' "${f}" 2>/dev/null || true)"
+            if [[ -n "${tmp}" && "$(cat "${f}")" != "${tmp}" ]]; then
+                printf '%s\n' "${tmp}" >"${f}"
+                changed_xray=1
+            fi
+        fi
+        for f in /etc/v2ray-agent/xray/conf/*direct*.json; do
+            [[ -f "${f}" ]] || continue
+            case "${f}" in
+            *[Ii][Pp][Vv]4* | *[Ii][Pp][Vv]6*) continue ;;
+            esac
+            tmp="$(jq --arg s "${xray_strategy}" '
+              if .outbounds then
+                .outbounds |= map(if .settings.domainStrategy then .settings.domainStrategy=$s else . end)
+              else . end
+            ' "${f}" 2>/dev/null || true)"
+            if [[ -n "${tmp}" && "$(cat "${f}")" != "${tmp}" ]]; then
+                printf '%s\n' "${tmp}" >"${f}"
+                changed_xray=1
+            fi
+        done
+        for f in /etc/v2ray-agent/sing-box/conf/config/*direct*.json /etc/v2ray-agent/sing-box/conf/config/socks5_outbound.json /etc/v2ray-agent/sing-box/conf/config.json; do
+            [[ -f "${f}" ]] || continue
+            case "${f}" in
+            *[Ii][Pp][Vv]4* | *[Ii][Pp][Vv]6*) continue ;;
+            esac
+            tmp="$(jq --arg s "${singbox_strategy}" '
+              if .outbounds then
+                .outbounds |= map(
+                  if (.domain_strategy and ((.tag // "") | test("IPv4|IPv6") | not) and ((.tag // "") | test("direct|socks5_outbound")))
+                  then .domain_strategy=$s else . end
+                )
+              else . end
+            ' "${f}" 2>/dev/null || true)"
+            if [[ -n "${tmp}" && "$(cat "${f}")" != "${tmp}" ]]; then
+                printf '%s\n' "${tmp}" >"${f}"
+                changed_sing=1
+            fi
+        done
+    fi
+    if [[ "${changed_xray}" == "1" && -n $(pgrep -f "xray/xray" || true) ]]; then
+        handleXray stop
+        handleXray start
+    fi
+    if [[ "${changed_sing}" == "1" && -n $(pgrep -f "sing-box/sing-box" || true) ]]; then
+        handleSingBox stop
+        handleSingBox start
+    fi
+}
+
 jiuheyiApplyDnsMode() {
     local mode="${1:-}"
+    local query_strategy
+    query_strategy="$(jiuheyiXrayQueryStrategy)"
     if [[ -z "${mode}" ]]; then
         if [[ "${JIUHEYI_EGRESS:-}" == "aimili" ]]; then
             mode="global"
@@ -10233,10 +10386,10 @@ jiuheyiApplyDnsMode() {
     printf '%s\n' "$(jiuheyiPolicyJson)" >/etc/v2ray-agent/xray/conf/00_policy.json
     printf '%s\n' "$(jiuheyiPolicyJson)" >/etc/v2ray-agent/xray/conf/12_policy.json
     if [[ "${mode}" != "global" ]]; then
-        cat <<'EOF' >/etc/v2ray-agent/xray/conf/00_dns.json
+        cat >/etc/v2ray-agent/xray/conf/00_dns.json <<EOF
 {
   "dns": {
-    "queryStrategy": "UseIPv4v6",
+    "queryStrategy": "${query_strategy}",
     "servers": ["1.1.1.1", "8.8.8.8"]
   }
 }
@@ -10244,10 +10397,10 @@ EOF
         rm -f /etc/v2ray-agent/xray/conf/zz_socks5_outbound.json /etc/v2ray-agent/xray/conf/zz_egress.json
         return 0
     fi
-    cat <<'EOF' >/etc/v2ray-agent/xray/conf/00_dns.json
+    cat >/etc/v2ray-agent/xray/conf/00_dns.json <<EOF
 {
   "dns": {
-    "queryStrategy": "UseIPv4v6",
+    "queryStrategy": "${query_strategy}",
     "servers": [
       {
         "address": "1.1.1.1",
@@ -10281,10 +10434,10 @@ EOF
   ]
 }
 EOF
-    cat <<'EOF' >/etc/v2ray-agent/xray/conf/zz_egress.json
+    cat >/etc/v2ray-agent/xray/conf/zz_egress.json <<EOF
 {
   "routing": {
-    "domainStrategy": "UseIPv4v6",
+    "domainStrategy": "${query_strategy}",
     "rules": [
       {
         "type": "field",
@@ -10312,10 +10465,14 @@ jiuheyiDnsMenu() {
         current=$(tr -d '[:space:]' </etc/v2ray-agent/jiuheyi_dns_mode)
     fi
     echoContent red "\n=============================================================="
-    echoContent green "当前 DNS：${current}"
-    echoContent yellow "1.不分流。本机解析，IPv4 优先，没有 IPv4 再用 IPv6，流量不走 8500"
+    echoContent green "当前分流：${current}"
+    echoContent green "当前解析：$(jiuheyiIpStrategyLabel)"
+    echoContent yellow "1.不分流。本机解析，流量不走 8500"
     echoContent yellow "2.全局分流。DNS 和访问都走 AimiliVPN 127.0.0.1:8500"
     echoContent yellow "3.自定义分流"
+    echoContent yellow "4.仅 IPv4"
+    echoContent yellow "5.仅 IPv6"
+    echoContent yellow "6.IPv4 和 IPv6 同时，IPv4 优先（默认）"
     echoContent red "=============================================================="
     read -r -p "请选择:" jiuheyiDnsChoice
     case ${jiuheyiDnsChoice} in
@@ -10337,6 +10494,18 @@ jiuheyiDnsMenu() {
         ;;
     3)
         routingToolsMenu 1
+        ;;
+    4)
+        jiuheyiApplyIpStrategy ipv4
+        echoContent green " ---> 解析已改为仅 IPv4。11 里的分流规则没有改"
+        ;;
+    5)
+        jiuheyiApplyIpStrategy ipv6
+        echoContent green " ---> 解析已改为仅 IPv6。11 里的分流规则没有改"
+        ;;
+    6)
+        jiuheyiApplyIpStrategy dual
+        echoContent green " ---> 解析已改为 IPv4 优先。11 里的分流规则没有改"
         ;;
     *)
         menu
@@ -10448,7 +10617,132 @@ jiuheyiSaveScript() {
     [[ -s /etc/v2ray-agent/install.sh ]] && chmod 700 /etc/v2ray-agent/install.sh || true
 }
 
-# 一键安装只问两件事：是否同时安装 AimiliVPN，以及域名。其余用默认值。
+# 一键开始前选择伪装域名。不选则用微软，避免所有机器挤同一个目标。
+jiuheyiChooseCamouflage() {
+    if [[ -n "${JIUHEYI_REALITY_DOMAIN:-}" ]]; then
+        realityServerName="${JIUHEYI_REALITY_DOMAIN}"
+        realityDomainPort=443
+        return 0
+    fi
+    if [[ -n "${realityServerName}" ]]; then
+        realityDomainPort="${realityDomainPort:-443}"
+        return 0
+    fi
+    if [[ ! -t 0 ]]; then
+        realityServerName="www.microsoft.com"
+        realityDomainPort=443
+        return 0
+    fi
+    echoContent skyBlue "\n================ 选择伪装域名 ================"
+    echoContent yellow "Reality 的伪装域名和握手地址用同一个。不选则用 www.microsoft.com。"
+    echoContent yellow "不要所有机器都用同一个，否则容易挤在一起出问题。"
+    echoContent yellow "1.www.microsoft.com（直接回车）"
+    echoContent yellow "2.www.apple.com"
+    echoContent yellow "3.dl.google.com"
+    echoContent yellow "4.addons.mozilla.org"
+    echoContent yellow "5.自己输入"
+    read -r -p "请选择:" camouflageChoice
+    case "${camouflageChoice}" in
+    2) realityServerName="www.apple.com" ;;
+    3) realityServerName="dl.google.com" ;;
+    4) realityServerName="addons.mozilla.org" ;;
+    5)
+        read -r -p "请输入伪装域名:" realityServerName
+        realityServerName="$(printf '%s' "${realityServerName}" | tr -d '[:space:]')"
+        if [[ -z "${realityServerName}" ]]; then
+            realityServerName="www.microsoft.com"
+        fi
+        ;;
+    *) realityServerName="www.microsoft.com" ;;
+    esac
+    if echo "${realityServerName}" | grep -q ":"; then
+        realityDomainPort="$(echo "${realityServerName}" | awk -F '[:]' '{print $2}')"
+        realityServerName="$(echo "${realityServerName}" | awk -F '[:]' '{print $1}')"
+    else
+        realityDomainPort=443
+    fi
+    echoContent green " ---> 伪装: ${realityServerName}:${realityDomainPort}"
+}
+
+jiuheyiPickPort() {
+    local p tries=0
+    while ((tries < 40)); do
+        p=$((RANDOM % 29999 + 10001))
+        if command -v ss >/dev/null 2>&1 && ss -lntuH | awk '{print $4}' | grep -Eq "(^|:)${p}$"; then
+            tries=$((tries + 1))
+            continue
+        fi
+        echo "${p}"
+        return 0
+    done
+    echo $((RANDOM % 29999 + 10001))
+}
+
+jiuheyiEnsureTlsMaterial() {
+    local name="${domain:-}"
+    if [[ -z "${name}" ]]; then
+        name="$(curl -4fsS --max-time 5 https://api.ipify.org || true)"
+        [[ -n "${name}" ]] || name="127.0.0.1"
+        currentHost="${name}"
+    fi
+    mkdir -p /etc/v2ray-agent/tls
+    local cert="/etc/v2ray-agent/tls/${name}.crt"
+    local key="/etc/v2ray-agent/tls/${name}.key"
+    if [[ -s "${cert}" && -s "${key}" ]]; then
+        return 0
+    fi
+    if [[ -n "${domain}" ]]; then
+        jiuheyiIssueDomainCert || true
+    fi
+    if [[ ! -s "${cert}" || ! -s "${key}" ]]; then
+        openssl req -x509 -nodes -newkey rsa:2048 -days 3650 -keyout "${key}" -out "${cert}" -subj "/CN=${name}" >/dev/null 2>&1 || true
+        chmod 600 "${key}" || true
+    fi
+}
+
+# 一键只装实测延迟低、带宽高的协议，不装全部 sing-box 协议。
+# Xray 用 Reality XHTTP。sing-box 用 Reality gRPC。Hysteria2 给 WiFi Calling 这类 UDP。
+# 已上线的机器不要走这里，vasma 只补保活。
+jiuheyiInstallTestedStack() {
+    export AIMILI_SUITE=1
+    selectCoreType=1
+    selectCustomInstallType=",12,"
+    if [[ -z "${xHTTPort}" ]]; then
+        xHTTPort="${realityPort:-443}"
+    fi
+    if [[ -z "${customPath}" ]]; then
+        initRandomPath
+    fi
+    totalProgress=8
+    installTools 1
+    handleNginx stop || true
+    installXray 2 false
+    installXrayService 3
+    initXrayConfig custom 4
+    jiuheyiEnsureTlsMaterial
+    hysteria2ClientDownloadSpeed="${hysteria2ClientDownloadSpeed:-100}"
+    hysteria2ClientUploadSpeed="${hysteria2ClientUploadSpeed:-50}"
+    if [[ -n "${currentClients}" ]]; then
+        currentUUID="$(echo "${currentClients}" | jq -r '.[0].id // .[0].uuid // empty' 2>/dev/null || true)"
+    fi
+    lastInstallationConfig=1
+    singBoxVLESSRealityGRPCPort="$(jiuheyiPickPort)"
+    singBoxHysteria2Port="$(jiuheyiPickPort)"
+    selectCoreType=2
+    selectCustomInstallType=",8,6,"
+    installSingBox 5
+    installSingBoxService 6
+    initSingBoxConfig custom 7
+    handleXray stop || true
+    jiuheyiTuneXray
+    handleXray start || true
+    handleSingBox stop || true
+    handleSingBox start || true
+    checkGFWStatue 8 || true
+    showAccounts 8 || true
+}
+
+# 一键安装先选伪装，再问是否安装 AimiliVPN 和域名。
 jiuheyiOneClick() {
     if [[ "${AIMILI_ALLOW_EXISTING:-}" != "1" && "${JIUHEYI_FROM_AIMILI:-}" != "1" ]]; then
         if [[ -f /opt/aimilivpn/vpngate_data/state.json || -f /etc/v2ray-agent/xray/xray || -f /etc/v2ray-agent/sing-box/sing-box ]]; then
@@ -10463,7 +10757,8 @@ jiuheyiOneClick() {
         install_aimili="n"
         JIUHEYI_EGRESS="aimili"
     elif [[ -z "${install_aimili}" && -t 0 ]]; then
-        echoContent skyBlue "九合一  V1.0.1    署名：我爱研究.ilovestudy"
+        echoContent skyBlue "九合一  V1.0.3    署名：我爱研究.ilovestudy"
+        jiuheyiChooseCamouflage
         read -r -p "是否同时安装 AimiliVPN？[y/N]: " install_aimili
         read -r -p "请输入域名，直接回车表示使用服务器 IP: " domain
     fi
@@ -10484,21 +10779,22 @@ jiuheyiOneClick() {
 
     export AIMILI_SUITE=1
     jiuheyiSaveScript
+    if [[ -z "${realityServerName}" ]]; then
+        jiuheyiChooseCamouflage
+    fi
     if command -v ss >/dev/null 2>&1 && ss -ltnH | awk '{print $4}' | grep -Eq '(^|:)443$'; then
-        realityPort=$((RANDOM % 29999 + 10001))
-        echoContent yellow " ---> 443 已被占用，节点端口改用 ${realityPort}"
+        realityPort="$(jiuheyiPickPort)"
+        echoContent yellow " ---> 443 已被占用，XHTTP 端口改用 ${realityPort}"
     else
         realityPort=443
     fi
-    realityServerName="${realityServerName:-www.apple.com}"
-    realityDomainPort=443
-    selectInstallType=3
-    selectCoreType=1
-    installXrayReality
+    xHTTPort="${realityPort}"
+    realityDomainPort="${realityDomainPort:-443}"
+    jiuheyiInstallTestedStack
     jiuheyiInstallDefaultSubscribe
     handleNginx start || true
     aliasInstall
-    echoContent green "九合一安装完成。节点端口 ${realityPort}，伪装 ${realityServerName}。执行 vasma 可修改。"
+    echoContent green "九合一安装完成。XHTTP ${xHTTPort}，伪装 ${realityServerName}。sing-box 已装 gRPC 和 Hysteria2。执行 vasma 可修改。"
 }
 
 
