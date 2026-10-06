@@ -6355,17 +6355,11 @@ removeUser() {
     fi
     manageAccount 1
 }
-# 更新脚本。只拉本仓库里的九合一，避免更新后又装回上游脚本。
+# 更新脚本。只拉九合一自己的仓库，避免更新后又装回上游脚本。
 updateV2RayAgent() {
     echoContent skyBlue "\n进度  $1/${totalProgress} : 更新九合一脚本"
-    local script_url="${JIUHEYI_SCRIPT_URL:-https://raw.githubusercontent.com/hankinsus/ilovestudy-node-9/main/install.sh}"
     rm -rf /etc/v2ray-agent/install.sh
-    if [[ "${release}" == "alpine" ]]; then
-        wget -c -q -O /etc/v2ray-agent/install.sh --no-check-certificate "${script_url}"
-    else
-        wget -c -q "${wgetShowProgressStatus}" -O /etc/v2ray-agent/install.sh --no-check-certificate "${script_url}"
-    fi
-    if [[ ! -s /etc/v2ray-agent/install.sh ]]; then
+    if ! jiuheyiFetch /etc/v2ray-agent/install.sh; then
         echoContent red " ---> 更新失败，脚本没有下载到"
         exit 0
     fi
@@ -10312,13 +10306,27 @@ EOF
     echoContent green " ---> 订阅端口: ${port}"
 }
 
+jiuheyiFetch() {
+    local dest="$1"
+    local url
+    for url in \
+        "${JIUHEYI_SCRIPT_URL:-https://raw.githubusercontent.com/hankinsus/ilovestudy-node-9/main/install.sh}" \
+        "https://raw.githubusercontent.com/ilovestudyus-sketch/ilovestudy-node-9/main/install.sh"
+    do
+        if curl -fsSL "${url}" -o "${dest}" && [[ -s "${dest}" ]] && grep -q "九合一 V1.0.1" "${dest}"; then
+            return 0
+        fi
+    done
+    return 1
+}
+
 jiuheyiSaveScript() {
     mkdir -p /etc/v2ray-agent
     if [[ -r "$0" && "$0" != "/etc/v2ray-agent/install.sh" ]]; then
         cp "$0" /etc/v2ray-agent/install.sh 2>/dev/null || true
     fi
-    if [[ ! -s /etc/v2ray-agent/install.sh ]]; then
-        curl -fsSL "${JIUHEYI_SCRIPT_URL:-https://raw.githubusercontent.com/hankinsus/ilovestudy-node-9/main/install.sh}" -o /etc/v2ray-agent/install.sh || true
+    if [[ ! -s /etc/v2ray-agent/install.sh ]] || ! grep -q "九合一 V1.0.1" /etc/v2ray-agent/install.sh; then
+        jiuheyiFetch /etc/v2ray-agent/install.sh || true
     fi
     [[ -s /etc/v2ray-agent/install.sh ]] && chmod 700 /etc/v2ray-agent/install.sh || true
 }

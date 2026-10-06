@@ -10,8 +10,10 @@
 在新的 Ubuntu/Debian 服务器上执行：
 
 ```bash
-bash <(curl -Ls https://raw.githubusercontent.com/hankinsus/ilovestudy-node-9/main/install.sh)
+bash <(curl -Ls https://raw.githubusercontent.com/ilovestudyus-sketch/ilovestudy-node-9/main/install.sh)
 ```
+
+同一个脚本也会放在 https://github.com/hankinsus/ilovestudy-node-9 。当前这台环境的部署公钥还没有该仓库的写入权限，所以一键命令先用 ilovestudyus-sketch。hankinsus 仓库授权后，两个地址内容一致。
 
 安装时只问两件事：
 
@@ -72,4 +74,4 @@ vasma
 - https://github.com/hankinsus/ilovestudy-node-9
 - https://github.com/ilovestudyus-sketch/ilovestudy-node-9
 
-两个仓库内容相同。一键命令使用 hankinsus 这个地址。
+两个仓库内容相同。当前可安装的地址是 ilovestudyus-sketch。hankinsus 仓库补上写入权限后会放同一份脚本。
