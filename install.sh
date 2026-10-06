@@ -10104,16 +10104,68 @@ singBoxVersionManageMenu() {
 }
 
 # 主菜单
+jiuheyiLooksLikeDomain() {
+    local name="$1"
+    [[ -n "${name}" && "${name}" != "null" && "${name}" == *.* && "${name}" != *.crt ]] || return 1
+    [[ "${name}" =~ ^[0-9.]+$ ]] && return 1
+    [[ "${name}" == *:* ]] && return 1
+    return 0
+}
+
+jiuheyiKnownDomain() {
+    if jiuheyiLooksLikeDomain "${domain:-}"; then
+        printf '%s' "${domain}"
+        return 0
+    fi
+    if jiuheyiLooksLikeDomain "${currentHost:-}"; then
+        printf '%s' "${currentHost}"
+        return 0
+    fi
+    local cert name
+    for cert in /etc/v2ray-agent/tls/*.crt; do
+        [[ -f "${cert}" ]] || continue
+        name="$(basename "${cert}" .crt)"
+        if jiuheyiLooksLikeDomain "${name}" && [[ "${name}" != "subscribe" ]]; then
+            printf '%s' "${name}"
+            return 0
+        fi
+    done
+    return 1
+}
+
+# 菜单 20。Aimili 已装则跳过。有域名直接装，没有就问，回车也安装。
+jiuheyiInstallAimili() {
+    if [[ -f /opt/aimilivpn/vpngate_data/state.json ]]; then
+        echoContent yellow "AimiliVPN 已经安装，跳过。"
+        return 0
+    fi
+    local use_domain=""
+    use_domain="$(jiuheyiKnownDomain || true)"
+    if [[ -n "${use_domain}" ]]; then
+        echoContent green "检测到域名 ${use_domain}，直接安装 AimiliVPN。"
+    elif [[ -t 0 ]]; then
+        read -r -p "请输入域名，直接回车安装: " use_domain
+        use_domain="$(printf '%s' "${use_domain}" | tr -d '[:space:]')"
+    fi
+    local aimili_url="${AIMILI_INSTALL_URL:-https://raw.githubusercontent.com/hankinsus/aimili-vpngate-production/main/install.sh}"
+    if ! curl -fsSL "${aimili_url}" -o /tmp/aimili-install.sh; then
+        echoContent red "AimiliVPN 安装脚本下载失败。"
+        return 1
+    fi
+    AIMILI_FROM_JIUHEYI=1 AIMILIVPN_DOMAIN="${use_domain}" bash /tmp/aimili-install.sh
+}
+
 menu() {
     cd "$HOME" || exit
     echoContent red "\n=============================================================="
     echoContent green "署名：我爱研究.ilovestudy"
-    echoContent green "当前版本：V1.0.4"
+    echoContent green "当前版本：V1.0.5"
     echoContent green "描述：九合一共存脚本\c"
     showInstallStatus
     checkWgetShowProgress
-    echoContent green "\n一键：选内核后安装该内核全部协议。Xray 节点 443，订阅 18443。伪装不选则用 www.microsoft.com"
+    echoContent green "\n0 默认安装：内核、域名、伪装域名。Xray 节点 443，订阅 18443。"
     echoContent red "=============================================================="
+    echoContent yellow "0.默认安装（内核、域名、伪装域名）"
     if [[ -n "${coreInstallType}" ]]; then
         echoContent yellow "1.重新安装"
     else
@@ -10141,13 +10193,17 @@ menu() {
     echoContent yellow "17.更新脚本"
     echoContent yellow "18.安装BBR、DD脚本"
     echoContent skyBlue "-------------------------脚本管理-----------------------------"
-    echoContent yellow "20.卸载脚本"
+    echoContent yellow "20.安装AimiliVPN"
+    echoContent yellow "30.卸载脚本"
     echoContent red "=============================================================="
     mkdirTools
     aliasInstall
     jiuheyiRepairKeepalive
     read -r -p "请选择:" selectInstallType
     case ${selectInstallType} in
+    0)
+        AIMILI_ALLOW_EXISTING=1 jiuheyiOneClick
+        ;;
     1)
         selectCoreInstall
         ;;
@@ -10206,6 +10262,9 @@ menu() {
         bbrInstall
         ;;
     20)
+        jiuheyiInstallAimili
+        ;;
+    30)
         unInstall 1
         ;;
     esac
