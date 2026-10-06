@@ -10080,6 +10080,7 @@ menu() {
     echoContent yellow "9.证书管理"
     echoContent yellow "10.CDN节点管理"
     echoContent yellow "11.分流工具"
+    echoContent yellow "19.DNS模式"
     echoContent yellow "12.添加新端口"
     echoContent yellow "13.BT下载管理"
     echoContent yellow "15.域名黑名单"
@@ -10127,6 +10128,9 @@ menu() {
     11)
         routingToolsMenu 1
         ;;
+    19)
+        jiuheyiDnsMenu
+        ;;
     12)
         addCorePort 1
         ;;
@@ -10153,9 +10157,18 @@ menu() {
         ;;
     esac
 }
-# Xray 保活、IPv4 DNS，以及可选的 AimiliVPN 8500 出站。
-jiuheyiTuneXray() {
+# 不分流：本机解析，只查 IPv4。全局分流：解析和访问都走 AimiliVPN 8500。
+jiuheyiApplyDnsMode() {
+    local mode="${1:-}"
+    if [[ -z "${mode}" ]]; then
+        if [[ "${JIUHEYI_EGRESS:-}" == "aimili" ]]; then
+            mode="global"
+        else
+            mode="direct"
+        fi
+    fi
     mkdir -p /etc/v2ray-agent/xray/conf
+    printf '%s\n' "${mode}" >/etc/v2ray-agent/jiuheyi_dns_mode
     cat <<'EOF' >/etc/v2ray-agent/xray/conf/00_policy.json
 {
   "policy": {
@@ -10170,21 +10183,36 @@ jiuheyiTuneXray() {
   }
 }
 EOF
+    if [[ "${mode}" != "global" ]]; then
+        cat <<'EOF' >/etc/v2ray-agent/xray/conf/00_dns.json
+{
+  "dns": {
+    "queryStrategy": "UseIPv4",
+    "servers": ["1.1.1.1", "8.8.8.8"]
+  }
+}
+EOF
+        rm -f /etc/v2ray-agent/xray/conf/zz_socks5_outbound.json /etc/v2ray-agent/xray/conf/zz_egress.json
+        return 0
+    fi
     cat <<'EOF' >/etc/v2ray-agent/xray/conf/00_dns.json
 {
   "dns": {
     "queryStrategy": "UseIPv4",
     "servers": [
-      "1.1.1.1",
-      "8.8.8.8"
+      {
+        "address": "1.1.1.1",
+        "domains": ["full:www.apple.com", "full:www.microsoft.com", "domain:apple.com", "domain:microsoft.com"],
+        "skipFallback": true
+      },
+      {
+        "address": "1.1.1.1",
+        "detour": "socks5_outbound"
+      }
     ]
   }
 }
 EOF
-    if [[ "${JIUHEYI_EGRESS:-}" != "aimili" ]]; then
-        rm -f /etc/v2ray-agent/xray/conf/zz_socks5_outbound.json /etc/v2ray-agent/xray/conf/zz_egress.json
-        return 0
-    fi
     cat <<'EOF' >/etc/v2ray-agent/xray/conf/zz_socks5_outbound.json
 {
   "outbounds": [
@@ -10196,9 +10224,7 @@ EOF
           {
             "address": "127.0.0.1",
             "port": 8500,
-            "users": [
-              {"user": "socks5", "pass": "ilovestudy"}
-            ]
+            "users": [{"user": "socks5", "pass": "ilovestudy"}]
           }
         ]
       }
@@ -10225,6 +10251,48 @@ EOF
   }
 }
 EOF
+}
+
+jiuheyiTuneXray() {
+    jiuheyiApplyDnsMode
+}
+
+jiuheyiDnsMenu() {
+    local current="direct"
+    if [[ -s /etc/v2ray-agent/jiuheyi_dns_mode ]]; then
+        current=$(tr -d '[:space:]' </etc/v2ray-agent/jiuheyi_dns_mode)
+    fi
+    echoContent red "\n=============================================================="
+    echoContent green "当前 DNS：${current}"
+    echoContent yellow "1.不分流。本机解析，只查 IPv4，流量不走 8500"
+    echoContent yellow "2.全局分流。DNS 和访问都走 AimiliVPN 127.0.0.1:8500"
+    echoContent yellow "3.自定义分流"
+    echoContent red "=============================================================="
+    read -r -p "请选择:" jiuheyiDnsChoice
+    case ${jiuheyiDnsChoice} in
+    1)
+        jiuheyiApplyDnsMode direct
+        if [[ -f /etc/v2ray-agent/xray/xray ]]; then
+            handleXray stop
+            handleXray start
+        fi
+        echoContent green " ---> 已改为不分流"
+        ;;
+    2)
+        jiuheyiApplyDnsMode global
+        if [[ -f /etc/v2ray-agent/xray/xray ]]; then
+            handleXray stop
+            handleXray start
+        fi
+        echoContent green " ---> 已改为全局分流"
+        ;;
+    3)
+        routingToolsMenu 1
+        ;;
+    *)
+        menu
+        ;;
+    esac
 }
 
 jiuheyiIssueDomainCert() {
