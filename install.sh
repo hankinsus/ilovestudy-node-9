@@ -2,8 +2,7 @@
 # 九合一 V1.0.1
 # 署名: 我爱研究.ilovestudy
 # 独立仓库：https://github.com/hankinsus/ilovestudy-node-9
-# 一键默认 Xray Reality XHTTP，伪装不选则用 www.microsoft.com，订阅 18443。
-# sing-box 只加 gRPC 和 Hysteria2，不装全部协议。
+# 一键默认按所选内核安装全部协议。Xray 节点 443，订阅 18443。伪装不选则用 www.microsoft.com。
 # 联合安装 AimiliVPN 时，出站为 127.0.0.1:8500，用户 socks5，密码 ilovestudy。
 # 检测区
 # -------------------------------------------------------------
@@ -1503,6 +1502,17 @@ initTLSNginxConfig() {
     if [[ "${AIMILI_SUITE:-}" == "1" && -n "${domain}" ]]; then
         echoContent yellow "\n ---> 使用指定域名: ${domain}"
         dnsTLSDomain=$(echo "${domain}" | awk -F "." '{$1="";print $0}' | sed 's/^[[:space:]]*//' | sed 's/ /./g')
+        # 域名已经问过。Xray 的节点端口仍走原始校验：443、放行、DNS、探测端口。
+        if [[ "${selectCoreType}" == "1" ]]; then
+            if [[ -z "${port}" ]]; then
+                port=443
+            fi
+            allowPort "${port}"
+            echoContent yellow "\n ---> 端口: ${port}"
+            checkDNSIP "${domain}"
+            removeNginxDefaultConf
+            checkPortOpen "${port}" "${domain}"
+        fi
         handleNginx stop
         return 0
     fi
@@ -3905,6 +3915,11 @@ singBoxMergeConfig() {
 # 初始化sing-box端口
 initSingBoxPort() {
     local port=$1
+    # 一键已经指定端口时直接用，不再追问。没指定的协议仍按原始逻辑随机。
+    if [[ "${AIMILI_SUITE:-}" == "1" && -n "${port}" ]]; then
+        echo "${port}"
+        return 0
+    fi
     if [[ -n "${port}" && -z "${lastInstallationConfig}" ]]; then
         read -r -p "读取到上次使用的端口，是否使用 ？[y/n]:" historyPort
         if [[ "${historyPort}" != "y" ]]; then
@@ -9835,6 +9850,11 @@ initXrayRealityPort() {
         if [[ -z "${realityPort}" ]]; then
             realityPort=443
         fi
+        # 原始安装里 TLS 节点默认也是 443。两个都写 443 时 Xray 起不来，Reality 让开。
+        if [[ "${AIMILI_SUITE:-}" == "1" && "${realityPort}" == "${port}" && -n "${port}" ]]; then
+            realityPort="$(jiuheyiPickPort)"
+            echoContent yellow " ---> 节点端口 ${port} 给 TLS，Reality 改用 ${realityPort}"
+        fi
         #        fi
         if [[ -n "${realityPort}" && "${xrayVLESSRealityPort}" == "${realityPort}" ]]; then
             handleXray stop
@@ -9867,6 +9887,9 @@ initXrayXHTTPort() {
         read -r -p "端口:" xHTTPort
         if [[ -z "${xHTTPort}" ]]; then
             xHTTPort=$((RANDOM % 29999 + 10001))
+        fi
+        if [[ "${AIMILI_SUITE:-}" == "1" && -n "${xHTTPort}" && ( "${xHTTPort}" == "${port}" || "${xHTTPort}" == "${realityPort}" ) ]]; then
+            xHTTPort="$(jiuheyiPickPort)"
         fi
         if [[ -n "${xHTTPort}" && "${xrayVLESSRealityXHTTPort}" == "${xHTTPort}" ]]; then
             handleXray stop
@@ -10085,11 +10108,11 @@ menu() {
     cd "$HOME" || exit
     echoContent red "\n=============================================================="
     echoContent green "署名：我爱研究.ilovestudy"
-    echoContent green "当前版本：V1.0.3"
+    echoContent green "当前版本：V1.0.4"
     echoContent green "描述：九合一共存脚本\c"
     showInstallStatus
     checkWgetShowProgress
-    echoContent green "\n默认：Xray XHTTP、sing-box gRPC、Hysteria2。伪装不选则用 www.microsoft.com"
+    echoContent green "\n一键：选内核后安装该内核全部协议。Xray 节点 443，订阅 18443。伪装不选则用 www.microsoft.com"
     echoContent red "=============================================================="
     if [[ -n "${coreInstallType}" ]]; then
         echoContent yellow "1.重新安装"
@@ -10587,6 +10610,7 @@ server {
 }
 EOF
     subscribePort="${port}"
+    allowPort "${port}"
     handleNginx start || true
     subscribe true || true
     echoContent green " ---> 订阅端口: ${port}"
@@ -10700,49 +10724,44 @@ jiuheyiEnsureTlsMaterial() {
     fi
 }
 
-# 一键只装实测延迟低、带宽高的协议，不装全部 sing-box 协议。
-# Xray 用 Reality XHTTP。sing-box 用 Reality gRPC。Hysteria2 给 WiFi Calling 这类 UDP。
-# 已上线的机器不要走这里，vasma 只补保活。
-jiuheyiInstallTestedStack() {
-    export AIMILI_SUITE=1
-    selectCoreType=1
-    selectCustomInstallType=",12,"
-    if [[ -z "${xHTTPort}" ]]; then
-        xHTTPort="${realityPort:-443}"
+# 一键按内核安装全部协议。Xray 6 个，sing-box 11 个。单独安装多一个自定义。
+# 已上线的机器不要走这里。
+jiuheyiAskCore() {
+    jiuheyiCoreChoice="${JIUHEYI_CORE:-}"
+    case "${jiuheyiCoreChoice}" in
+    xray | 1) jiuheyiCoreChoice=1 ;;
+    singbox | sing-box | 2) jiuheyiCoreChoice=2 ;;
+    custom | 3) jiuheyiCoreChoice=3 ;;
+    *) jiuheyiCoreChoice="" ;;
+    esac
+    if [[ -n "${jiuheyiCoreChoice}" ]]; then
+        return 0
     fi
-    if [[ -z "${customPath}" ]]; then
-        initRandomPath
+    if [[ ! -t 0 ]]; then
+        jiuheyiCoreChoice=1
+        return 0
     fi
-    totalProgress=8
-    installTools 1
-    handleNginx stop || true
-    installXray 2 false
-    installXrayService 3
-    initXrayConfig custom 4
-    jiuheyiEnsureTlsMaterial
-    hysteria2ClientDownloadSpeed="${hysteria2ClientDownloadSpeed:-100}"
-    hysteria2ClientUploadSpeed="${hysteria2ClientUploadSpeed:-50}"
-    if [[ -n "${currentClients}" ]]; then
-        currentUUID="$(echo "${currentClients}" | jq -r '.[0].id // .[0].uuid // empty' 2>/dev/null || true)"
+    echoContent skyBlue "\n================ 选择内核 ================"
+    echoContent yellow "1.Xray-core，6 个协议全部安装（直接回车）"
+    echoContent yellow "2.sing-box，11 个协议全部安装"
+    if [[ "${JIUHEYI_FROM_AIMILI:-}" != "1" ]]; then
+        echoContent yellow "3.自定义"
     fi
-    lastInstallationConfig=1
-    singBoxVLESSRealityGRPCPort="$(jiuheyiPickPort)"
-    singBoxHysteria2Port="$(jiuheyiPickPort)"
-    selectCoreType=2
-    selectCustomInstallType=",8,6,"
-    installSingBox 5
-    installSingBoxService 6
-    initSingBoxConfig custom 7
-    handleXray stop || true
-    jiuheyiTuneXray
-    handleXray start || true
-    handleSingBox stop || true
-    handleSingBox start || true
-    checkGFWStatue 8 || true
-    showAccounts 8 || true
+    read -r -p "请选择:" jiuheyiCoreChoice
+    case "${jiuheyiCoreChoice}" in
+    2) jiuheyiCoreChoice=2 ;;
+    3)
+        if [[ "${JIUHEYI_FROM_AIMILI:-}" == "1" ]]; then
+            jiuheyiCoreChoice=1
+        else
+            jiuheyiCoreChoice=3
+        fi
+        ;;
+    *) jiuheyiCoreChoice=1 ;;
+    esac
 }
 
-# 一键安装先选伪装，再问是否安装 AimiliVPN 和域名。
+# 一键只问三件事：内核、域名、伪装域名。其余按原始安装的默认值。
 jiuheyiOneClick() {
     if [[ "${AIMILI_ALLOW_EXISTING:-}" != "1" && "${JIUHEYI_FROM_AIMILI:-}" != "1" ]]; then
         if [[ -f /opt/aimilivpn/vpngate_data/state.json || -f /etc/v2ray-agent/xray/xray || -f /etc/v2ray-agent/sing-box/sing-box ]]; then
@@ -10756,45 +10775,67 @@ jiuheyiOneClick() {
     if [[ "${JIUHEYI_FROM_AIMILI:-}" == "1" ]]; then
         install_aimili="n"
         JIUHEYI_EGRESS="aimili"
-    elif [[ -z "${install_aimili}" && -t 0 ]]; then
-        echoContent skyBlue "九合一  V1.0.3    署名：我爱研究.ilovestudy"
-        jiuheyiChooseCamouflage
-        read -r -p "是否同时安装 AimiliVPN？[y/N]: " install_aimili
-        read -r -p "请输入域名，直接回车表示使用服务器 IP: " domain
     fi
-    domain=$(printf '%s' "${domain:-}" | tr -d '[:space:]')
+
+    jiuheyiAskCore
+    if [[ "${jiuheyiCoreChoice}" == "3" ]]; then
+        echoContent yellow "自定义安装。协议自己选，不再自动装完全部。"
+        jiuheyiSaveScript
+        selectInstallType=2
+        selectCoreInstall
+        aliasInstall
+        return 0
+    fi
+
+    if [[ -z "${domain}" && -t 0 ]]; then
+        read -r -p "请输入域名（TLS 协议需要域名）: " domain
+        domain="$(printf '%s' "${domain}" | tr -d '[:space:]')"
+        while [[ -z "${domain}" ]]; do
+            echoContent red "全部协议安装需要域名。直接回车不能跳过。"
+            read -r -p "请输入域名: " domain
+            domain="$(printf '%s' "${domain}" | tr -d '[:space:]')"
+        done
+    fi
+    domain="$(printf '%s' "${domain:-}" | tr -d '[:space:]')"
+    if [[ -z "${domain}" ]]; then
+        echoContent red "全部协议安装需要域名。请设置域名后再执行。"
+        exit 1
+    fi
     export domain
+    jiuheyiChooseCamouflage
     export JIUHEYI_EGRESS="${JIUHEYI_EGRESS:-}"
 
     if [[ "${install_aimili}" == "y" || "${install_aimili}" == "Y" ]]; then
         export JIUHEYI_EGRESS="aimili"
         local aimili_url="${AIMILI_INSTALL_URL:-https://raw.githubusercontent.com/hankinsus/aimili-vpngate-production/main/install.sh}"
         curl -fsSL "${aimili_url}" -o /tmp/aimili-install.sh
-        if [[ -n "${domain}" ]]; then
-            AIMILI_FROM_JIUHEYI=1 AIMILIVPN_DOMAIN="${domain}" bash /tmp/aimili-install.sh
-        else
-            AIMILI_FROM_JIUHEYI=1 AIMILIVPN_IP_CERT_FOREVER=1 bash /tmp/aimili-install.sh
-        fi
+        AIMILI_FROM_JIUHEYI=1 AIMILIVPN_DOMAIN="${domain}" bash /tmp/aimili-install.sh
     fi
 
     export AIMILI_SUITE=1
     jiuheyiSaveScript
-    if [[ -z "${realityServerName}" ]]; then
-        jiuheyiChooseCamouflage
-    fi
-    if command -v ss >/dev/null 2>&1 && ss -ltnH | awk '{print $4}' | grep -Eq '(^|:)443$'; then
-        realityPort="$(jiuheyiPickPort)"
-        echoContent yellow " ---> 443 已被占用，XHTTP 端口改用 ${realityPort}"
-    else
-        realityPort=443
-    fi
-    xHTTPort="${realityPort}"
     realityDomainPort="${realityDomainPort:-443}"
-    jiuheyiInstallTestedStack
+    if [[ "${jiuheyiCoreChoice}" == "2" ]]; then
+        selectCoreType=2
+        subscribePort=18443
+        singBoxInstall
+    else
+        selectCoreType=1
+        port=443
+        subscribePort=18443
+        xrayCoreInstall
+        handleXray stop || true
+        jiuheyiTuneXray
+        handleXray start || true
+    fi
     jiuheyiInstallDefaultSubscribe
     handleNginx start || true
     aliasInstall
-    echoContent green "九合一安装完成。XHTTP ${xHTTPort}，伪装 ${realityServerName}。sing-box 已装 gRPC 和 Hysteria2。执行 vasma 可修改。"
+    if [[ "${jiuheyiCoreChoice}" == "2" ]]; then
+        echoContent green "九合一安装完成。sing-box 11 个协议已安装。订阅 ${subscribePort}，伪装 ${realityServerName}。执行 vasma 可修改。"
+    else
+        echoContent green "九合一安装完成。Xray 6 个协议已安装。节点端口 ${port}，订阅 ${subscribePort}，伪装 ${realityServerName}。执行 vasma 可修改。"
+    fi
 }
 
 
