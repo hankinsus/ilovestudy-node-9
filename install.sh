@@ -9863,8 +9863,10 @@ checkRealityDest() {
 
 # 初始化客户端可用的ServersName
 initRealityClientServersName() {
+    if [[ -z "${realityServerName}" || "${realityServerName}" == "null" ]]; then
+        realityServerName="${JIUHEYI_REALITY_DOMAIN:-www.microsoft.com}"
+    fi
     if [[ "${AIMILI_SUITE:-}" == "1" ]]; then
-        realityServerName="${realityServerName:-www.microsoft.com}"
         realityDomainPort="${realityDomainPort:-443}"
         echoContent yellow "\n ---> 客户端可用域名: ${realityServerName}:${realityDomainPort}\n"
         return 0
@@ -10843,6 +10845,9 @@ jiuheyiSaveScript() {
 
 # 一键开始前选择伪装域名。不选则用微软，避免所有机器挤同一个目标。
 jiuheyiChooseCamouflage() {
+    if [[ "${realityServerName}" == "null" ]]; then
+        realityServerName=""
+    fi
     if [[ -n "${JIUHEYI_REALITY_DOMAIN:-}" ]]; then
         realityServerName="${JIUHEYI_REALITY_DOMAIN}"
         realityDomainPort=443
@@ -11125,6 +11130,9 @@ jiuheyiOneClick() {
     domain="$(printf '%s' "${domain:-}" | tr -d '[:space:]')"
     export domain
 
+    if [[ "${realityServerName}" == "null" ]]; then
+        realityServerName=""
+    fi
     if [[ -z "${JIUHEYI_REALITY_DOMAIN:-}" && -z "${realityServerName}" && -t 0 ]]; then
         local camouflage_input=""
         read -r -p "请输入伪装域名，直接回车使用 www.microsoft.com: " camouflage_input
