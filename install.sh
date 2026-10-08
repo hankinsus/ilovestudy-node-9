@@ -10983,6 +10983,8 @@ jiuheyiNoDomainOnly() {
 }
 
 jiuheyiNoDomainBroken() {
+    [[ -f /etc/v2ray-agent/sing-box/sing-box ]] && return 1
+    [[ -f /etc/v2ray-agent/xray/conf/02_VLESS_TCP_inbounds.json ]] && return 1
     local cfg="/etc/v2ray-agent/xray/conf/07_VLESS_vision_reality_inbounds.json"
     [[ -s "${cfg}" ]] || return 0
     if ! ss -ltnH 2>/dev/null | grep -q ':443 '; then
@@ -11190,7 +11192,7 @@ jiuheyiOneClick() {
 
 
 cronFunction
-if [[ "${JIUHEYI_MENU_ONLY:-}" == "1" ]]; then
+if [[ "$(basename "$0")" == "vasma" || "${JIUHEYI_MENU_ONLY:-}" == "1" ]]; then
     menu
 elif [[ "${JIUHEYI_ONECLICK:-}" == "1" || "${JIUHEYI_FROM_AIMILI:-}" == "1" ]]; then
     jiuheyiOneClick
