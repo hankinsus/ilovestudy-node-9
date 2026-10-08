@@ -4332,6 +4332,61 @@ EOF
         initRealityClientServersName
         initRealityKey
         initRealityMldsa65
+        local mldsaFields=""
+        if [[ -n "${realityMldsa65Seed}" && -n "${realityMldsa65Verify}" ]]; then
+            mldsaFields=$(cat <<EOF
+          "mldsa65Seed": "${realityMldsa65Seed}",
+          "mldsa65Verify": "${realityMldsa65Verify}",
+EOF
+)
+        fi
+        if echo "${selectCustomInstallType}" | grep -q ",7," && ! echo ",${selectCustomInstallType}," | grep -Eq ',(0|1|2|3|4|5|12),'; then
+            cat <<EOF >/etc/v2ray-agent/xray/conf/07_VLESS_vision_reality_inbounds.json
+{
+  "inbounds": [
+    {
+      "port": ${realityPort},
+      "protocol": "vless",
+      "tag": "VLESSReality",
+      "settings": {
+        "clients": $(initXrayClients 7),
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "security": "reality",
+        "sockopt": {
+          "tcpKeepAliveIdle": 30,
+          "tcpKeepAliveInterval": 15
+        },
+        "realitySettings": {
+          "show": false,
+          "target": "${realityServerName}:${realityDomainPort}",
+          "xver": 0,
+          "serverNames": [
+            "${realityServerName}"
+          ],
+          "privateKey": "${realityPrivateKey}",
+          "shortIds": [
+            "6ba85179e30d4fc2"
+          ],
+${mldsaFields}
+          "maxTimeDiff": 70000
+        }
+      },
+      "sniffing": {
+        "enabled": true,
+        "destOverride": [
+          "http",
+          "tls",
+          "quic"
+        ]
+      }
+    }
+  ]
+}
+EOF
+        else
         cat <<EOF >/etc/v2ray-agent/xray/conf/07_VLESS_vision_reality_inbounds.json
 {
   "inbounds": [
@@ -4419,6 +4474,7 @@ EOF
   }
 }
 EOF
+        fi
         #        cat <<EOF >/etc/v2ray-agent/xray/conf/08_VLESS_vision_gRPC_inbounds.json
         #{
         #  "inbounds": [
@@ -10920,6 +10976,18 @@ jiuheyiRealityReady() {
     [[ -x /etc/v2ray-agent/xray/xray && -s /etc/v2ray-agent/xray/conf/07_VLESS_vision_reality_inbounds.json ]]
 }
 
+jiuheyiNoDomainBroken() {
+    local cfg="/etc/v2ray-agent/xray/conf/07_VLESS_vision_reality_inbounds.json"
+    [[ -s "${cfg}" ]] || return 0
+    if ! ss -ltnH 2>/dev/null | grep -q ':443 '; then
+        return 0
+    fi
+    if grep -q '"protocol": "dokodemo-door"' "${cfg}" && [[ ! -f /etc/v2ray-agent/xray/conf/02_VLESS_TCP_inbounds.json ]]; then
+        return 0
+    fi
+    return 1
+}
+
 jiuheyiClearPartial() {
     systemctl stop xray >/dev/null 2>&1 || true
     systemctl unmask xray.service >/dev/null 2>&1 || true
@@ -10931,7 +10999,7 @@ jiuheyiJudgeEnvironment() {
     echoContent skyBlue "\n判断环境"
     echoContent green " ---> 系统 ${release:-未知} $(uname -m)"
     jiuheyiRecoverDisk || return 1
-    if [[ -f /opt/aimilivpn/vpngate_data/state.json || -f /etc/v2ray-agent/sing-box/sing-box ]] || jiuheyiRealityReady; then
+    if [[ -f /opt/aimilivpn/vpngate_data/state.json || -f /etc/v2ray-agent/sing-box/sing-box ]] || { jiuheyiRealityReady && ! jiuheyiNoDomainBroken; }; then
         echoContent red "检测到已有安装。请执行 vasma 修改，不要在已上线的机器上重装。"
         return 1
     fi
@@ -11112,7 +11180,11 @@ if [[ "${JIUHEYI_MENU_ONLY:-}" == "1" ]]; then
 elif [[ "${JIUHEYI_ONECLICK:-}" == "1" || "${JIUHEYI_FROM_AIMILI:-}" == "1" ]]; then
     jiuheyiOneClick
 elif [[ -f /etc/v2ray-agent/xray/xray || -f /etc/v2ray-agent/sing-box/sing-box ]]; then
-    menu
+    if jiuheyiNoDomainBroken; then
+        jiuheyiOneClick
+    else
+        menu
+    fi
 else
     jiuheyiOneClick
 fi
