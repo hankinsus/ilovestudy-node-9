@@ -1116,7 +1116,7 @@ installTools() {
     fi
 
     if [[ "${JIUHEYI_ONECLICK:-}" == "1" || "${AIMILI_SUITE:-}" == "1" ]]; then
-        echoContent green " ---> 安装依赖包，不更新系统"
+        jiuheyiInstallDeps || exit 1
     else
         if [[ -n $(pgrep -f "apt") ]]; then
             pgrep -f apt | xargs kill -9
@@ -10895,21 +10895,62 @@ jiuheyiDiskFreeBytes() {
 
 jiuheyiRecoverDisk() {
     swapoff /swapfile >/dev/null 2>&1 || true
-    chattr -i /swapfile >/dev/null 2>&1 || true
+    chattr -ia /swapfile >/dev/null 2>&1 || true
     rm -f /swapfile >/dev/null 2>&1 || true
-    if [[ -e /swapfile ]]; then
-        echoContent red " ---> 无法删除 /swapfile。请先执行: swapoff /swapfile && chattr -i /swapfile && rm -f /swapfile"
-        df -h / || true
-        return 1
-    fi
     rm -f /etc/v2ray-agent/xray/*.zip >/dev/null 2>&1 || true
     local avail
     avail=$(jiuheyiDiskFreeBytes)
-    echoContent green " ---> 磁盘可用 $((avail / 1024 / 1024)) MB"
     if [[ "${avail}" -lt 800000000 ]]; then
-        echoContent red " ---> 磁盘剩余不足 800MB，停止安装。请先清理磁盘。"
-        df -h / || true
+        apt-get clean >/dev/null 2>&1 || true
+        rm -rf /var/cache/apt/archives/*.deb >/dev/null 2>&1 || true
+        avail=$(jiuheyiDiskFreeBytes)
+    fi
+    echoContent green " ---> 磁盘可用 $((avail / 1024 / 1024)) MB"
+    if [[ -e /swapfile ]]; then
+        echoContent red " ---> 残留虚拟内存删不掉，安装停止。"
         return 1
+    fi
+    if [[ "${avail}" -lt 800000000 ]]; then
+        echoContent red " ---> 磁盘剩余不足 800MB，安装停止。"
+        return 1
+    fi
+}
+
+jiuheyiRealityReady() {
+    [[ -x /etc/v2ray-agent/xray/xray && -s /etc/v2ray-agent/xray/conf/07_VLESS_vision_reality_inbounds.json ]]
+}
+
+jiuheyiClearPartial() {
+    systemctl stop xray >/dev/null 2>&1 || true
+    systemctl unmask xray.service >/dev/null 2>&1 || true
+    rm -f /etc/systemd/system/xray.service /etc/systemd/system/multi-user.target.wants/xray.service
+    rm -rf /etc/v2ray-agent/xray
+}
+
+jiuheyiJudgeEnvironment() {
+    echoContent skyBlue "\n判断环境"
+    echoContent green " ---> 系统 ${release:-未知} $(uname -m)"
+    jiuheyiRecoverDisk || return 1
+    if [[ -f /opt/aimilivpn/vpngate_data/state.json || -f /etc/v2ray-agent/sing-box/sing-box ]] || jiuheyiRealityReady; then
+        echoContent red "检测到已有安装。请执行 vasma 修改，不要在已上线的机器上重装。"
+        return 1
+    fi
+    if [[ -e /etc/v2ray-agent/xray || -e /etc/systemd/system/xray.service ]]; then
+        echoContent yellow " ---> 上次没有安装完成，已清掉后继续"
+        jiuheyiClearPartial
+    fi
+    echoContent green " ---> 环境可以安装"
+}
+
+jiuheyiInstallDeps() {
+    echoContent green " ---> 安装依赖包，不更新系统"
+    export DEBIAN_FRONTEND=noninteractive
+    if [[ "${release}" == "ubuntu" || "${release}" == "debian" ]]; then
+        if ! apt-get install -y wget curl unzip socat tar cron jq openssl qrencode lsb-release lsof dnsutils sudo ca-certificates procps iproute2 >/tmp/jiuheyi-deps.log 2>&1; then
+            echoContent red " ---> 依赖包安装失败"
+            tail -n 20 /tmp/jiuheyi-deps.log || true
+            return 1
+        fi
     fi
 }
 
@@ -10969,15 +11010,12 @@ EOF
 
 jiuheyiOneClick() {
     export JIUHEYI_ONECLICK=1
-    jiuheyiRecoverDisk || exit 1
-    mkdirTools
     if [[ "${AIMILI_ALLOW_EXISTING:-}" != "1" && "${JIUHEYI_FROM_AIMILI:-}" != "1" ]]; then
-        if [[ -f /opt/aimilivpn/vpngate_data/state.json || -f /etc/v2ray-agent/xray/xray || -f /etc/v2ray-agent/sing-box/sing-box ]]; then
-            echoContent red "检测到已有安装。请执行 vasma 修改，不要在已上线的机器上重装。"
-            echoContent yellow "确认要重装时，先执行 AIMILI_ALLOW_EXISTING=1 bash install.sh"
-            exit 1
-        fi
+        jiuheyiJudgeEnvironment || exit 1
+    else
+        jiuheyiRecoverDisk || exit 1
     fi
+    mkdirTools
 
     local install_aimili="${JIUHEYI_WITH_AIMILI:-}"
     if [[ "${JIUHEYI_FROM_AIMILI:-}" == "1" ]]; then
