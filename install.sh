@@ -10834,17 +10834,43 @@ jiuheyiAskCore() {
 
 # 一键只问域名、伪装域名。有域名再问内核。无域名只装 Reality，不装需要证书的节点。
 jiuheyiPrepareMachine() {
-    local swap_bytes=0
+    local swap_bytes=0 avail=0
     if swapon --show=SIZE --bytes --noheadings >/dev/null 2>&1; then
         swap_bytes=$(swapon --show=SIZE --bytes --noheadings 2>/dev/null | awk '{s+=$1} END {print s+0}')
     fi
-    if [[ "${swap_bytes}" -lt 4294967296 && ! -f /swapfile ]]; then
-        echoContent yellow " ---> 添加 4G 虚拟内存"
-        fallocate -l 4G /swapfile 2>/dev/null || dd if=/dev/zero of=/swapfile bs=1M count=4096 status=none
-        chmod 600 /swapfile
-        mkswap /swapfile >/dev/null
-        swapon /swapfile || true
-        grep -q '/swapfile' /etc/fstab 2>/dev/null || echo '/swapfile none swap sw 0 0' >>/etc/fstab
+    avail=$(df -B1 --output=avail / 2>/dev/null | awk 'NR==2{print $1}')
+    if [[ -z "${avail}" ]]; then
+        avail=$(df -B1 / | awk 'NR==2{print $4}')
+    fi
+    if [[ "${swap_bytes}" -lt 4294967296 ]]; then
+        if [[ "${avail:-0}" -lt 4500000000 ]]; then
+            echoContent yellow " ---> 磁盘剩余不足 4G，跳过虚拟内存，继续安装"
+        else
+            echoContent yellow " ---> 添加 4G 虚拟内存。磁盘较慢时这里会停几十秒，随后继续"
+            swapoff /swapfile >/dev/null 2>&1 || true
+            rm -f /swapfile
+            if ! fallocate -l 4G /swapfile 2>/dev/null; then
+                dd if=/dev/zero of=/swapfile bs=1M count=4096 status=progress || true
+            fi
+            chmod 600 /swapfile 2>/dev/null || true
+            if ! mkswap /swapfile >/dev/null 2>&1 || ! swapon /swapfile >/dev/null 2>&1; then
+                swapoff /swapfile >/dev/null 2>&1 || true
+                rm -f /swapfile
+                echoContent yellow " ---> 快速分配不能当虚拟内存，改为直接写入"
+                if dd if=/dev/zero of=/swapfile bs=1M count=4096 status=progress; then
+                    chmod 600 /swapfile
+                    mkswap /swapfile >/dev/null 2>&1 || true
+                    swapon /swapfile >/dev/null 2>&1 || true
+                fi
+            fi
+            if swapon --show=NAME --noheadings 2>/dev/null | grep -q '/swapfile'; then
+                grep -q '/swapfile' /etc/fstab 2>/dev/null || echo '/swapfile none swap sw 0 0' >>/etc/fstab
+                echoContent green " ---> 4G 虚拟内存已启用"
+            else
+                rm -f /swapfile
+                echoContent yellow " ---> 虚拟内存未启用，继续安装"
+            fi
+        fi
     fi
     modprobe tcp_bbr >/dev/null 2>&1 || true
     if sysctl net.ipv4.tcp_available_congestion_control 2>/dev/null | grep -qw bbr; then
@@ -10869,7 +10895,6 @@ jiuheyiOneClick() {
             exit 1
         fi
     fi
-    jiuheyiPrepareMachine
 
     local install_aimili="${JIUHEYI_WITH_AIMILI:-}"
     if [[ "${JIUHEYI_FROM_AIMILI:-}" == "1" ]]; then
@@ -10890,6 +10915,7 @@ jiuheyiOneClick() {
         JIUHEYI_REALITY_DOMAIN="${camouflage_input:-www.microsoft.com}"
     fi
     jiuheyiChooseCamouflage
+    jiuheyiPrepareMachine
 
     if [[ -z "${domain}" ]]; then
         export AIMILI_SUITE=1
