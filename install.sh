@@ -10320,7 +10320,6 @@ menu() {
     echoContent yellow "17.安装BBR、DD脚本"
     echoContent yellow "18.更新脚本"
     echoContent skyBlue "-------------------------脚本管理-----------------------------"
-    echoContent yellow "20.安装AimiliVPN"
     echoContent yellow "30.卸载脚本"
     echoContent red "=============================================================="
     mkdirTools
@@ -10386,9 +10385,6 @@ menu() {
         ;;
     18)
         updateV2RayAgent 1
-        ;;
-    20)
-        jiuheyiInstallAimili
         ;;
     30)
         unInstall 1
