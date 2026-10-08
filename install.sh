@@ -1112,21 +1112,22 @@ installTools() {
     echoContent skyBlue "\n进度  $1/${totalProgress} : 安装工具"
     # 修复ubuntu个别系统问题
     if [[ "${release}" == "ubuntu" ]]; then
-        dpkg --configure -a
+        dpkg --configure -a >/dev/null 2>&1 || true
     fi
 
-    if [[ -n $(pgrep -f "apt") ]]; then
-        pgrep -f apt | xargs kill -9
-    fi
-
-    echoContent green " ---> 检查、安装更新【新机器会很慢，如长时间无反应，请手动停止后重新执行】"
-
-    if [[ "${release}" != "centos" ]]; then
-        ${upgrade} >/etc/v2ray-agent/install.log 2>&1
-    fi
-
-    if grep <"/etc/v2ray-agent/install.log" -q "changed"; then
-        ${updateReleaseInfoChange} >/dev/null 2>&1
+    if [[ "${JIUHEYI_ONECLICK:-}" == "1" || "${AIMILI_SUITE:-}" == "1" ]]; then
+        echoContent green " ---> 安装依赖包，不更新系统"
+    else
+        if [[ -n $(pgrep -f "apt") ]]; then
+            pgrep -f apt | xargs kill -9
+        fi
+        echoContent green " ---> 检查、安装更新【新机器会很慢，如长时间无反应，请手动停止后重新执行】"
+        if [[ "${release}" != "centos" ]]; then
+            ${upgrade} >/etc/v2ray-agent/install.log 2>&1
+        fi
+        if grep <"/etc/v2ray-agent/install.log" -q "changed"; then
+            ${updateReleaseInfoChange} >/dev/null 2>&1
+        fi
     fi
 
     if [[ "${release}" == "centos" ]]; then
@@ -10888,6 +10889,7 @@ EOF
 }
 
 jiuheyiOneClick() {
+    export JIUHEYI_ONECLICK=1
     if [[ "${AIMILI_ALLOW_EXISTING:-}" != "1" && "${JIUHEYI_FROM_AIMILI:-}" != "1" ]]; then
         if [[ -f /opt/aimilivpn/vpngate_data/state.json || -f /etc/v2ray-agent/xray/xray || -f /etc/v2ray-agent/sing-box/sing-box ]]; then
             echoContent red "检测到已有安装。请执行 vasma 修改，不要在已上线的机器上重装。"
@@ -10915,7 +10917,6 @@ jiuheyiOneClick() {
         JIUHEYI_REALITY_DOMAIN="${camouflage_input:-www.microsoft.com}"
     fi
     jiuheyiChooseCamouflage
-    jiuheyiPrepareMachine
 
     if [[ -z "${domain}" ]]; then
         export AIMILI_SUITE=1
@@ -10929,6 +10930,7 @@ jiuheyiOneClick() {
             installXrayReality
         fi
         aliasInstall
+        jiuheyiPrepareMachine
         echoContent green "九合一安装完成。无域名 Reality 已安装，端口 443，伪装 ${realityServerName}。执行 vasma 可修改。"
         return 0
     fi
@@ -10944,6 +10946,7 @@ jiuheyiOneClick() {
         selectInstallType=2
         selectCoreInstall
         aliasInstall
+        jiuheyiPrepareMachine
         return 0
     fi
 
@@ -10964,7 +10967,6 @@ jiuheyiOneClick() {
         singBoxVLESSRealityVisionPort=443
         singBoxVLESSRealityGRPCPort=443
         singBoxInstall
-        echoContent green "九合一安装完成。sing-box 11 个协议已安装。REALITY 443，其余端口 10001-39999，订阅 ${subscribePort}，伪装 ${realityServerName}。执行 vasma 可修改。"
     else
         selectCoreType=1
         port=443
@@ -10972,11 +10974,16 @@ jiuheyiOneClick() {
         handleXray stop || true
         jiuheyiTuneXray
         handleXray start || true
-        echoContent green "九合一安装完成。Xray 6 个协议已安装。节点端口 ${port}，订阅 ${subscribePort}，伪装 ${realityServerName}。执行 vasma 可修改。"
     fi
     jiuheyiInstallDefaultSubscribe
     handleNginx start || true
     aliasInstall
+    jiuheyiPrepareMachine
+    if [[ "${jiuheyiCoreChoice}" == "2" ]]; then
+        echoContent green "九合一安装完成。sing-box 11 个协议已安装。REALITY 443，其余端口 10001-39999，订阅 ${subscribePort}，伪装 ${realityServerName}。执行 vasma 可修改。"
+    else
+        echoContent green "九合一安装完成。Xray 6 个协议已安装。节点端口 ${port}，订阅 ${subscribePort}，伪装 ${realityServerName}。执行 vasma 可修改。"
+    fi
 }
 
 
