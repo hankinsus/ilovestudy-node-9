@@ -540,17 +540,22 @@ readInstallProtocolType() {
         if echo "${row}" | grep -q VLESS_vision_reality_inbounds; then
             currentInstallProtocolType="${currentInstallProtocolType}7,"
             if [[ "${coreInstallType}" == "1" ]]; then
-                xrayVLESSRealityServerName=$(jq -r .inbounds[1].streamSettings.realitySettings.serverNames[0] "${row}.json")
-                realityServerName=${xrayVLESSRealityServerName}
-                xrayVLESSRealityPort=$(jq -r .inbounds[0].port "${row}.json")
+                xrayVLESSRealityServerName=$(jq -r 'first(.inbounds[] | select(.streamSettings.realitySettings.serverNames != null) | .streamSettings.realitySettings.serverNames[0])' "${row}.json")
+                if [[ -n "${xrayVLESSRealityServerName}" && "${xrayVLESSRealityServerName}" != "null" ]]; then
+                    realityServerName=${xrayVLESSRealityServerName}
+                fi
+                xrayVLESSRealityPort=$(jq -r 'first(.inbounds[] | select(.protocol=="dokodemo-door") | .port) // first(.inbounds[] | select(.protocol=="vless") | .port)' "${row}.json")
 
-                realityDomainPort=$(jq -r .inbounds[1].streamSettings.realitySettings.target "${row}.json" | awk -F '[:]' '{print $2}')
+                realityDomainPort=$(jq -r 'first(.inbounds[] | select(.streamSettings.realitySettings.target != null) | .streamSettings.realitySettings.target)' "${row}.json" | awk -F '[:]' '{print $2}')
 
-                currentRealityPublicKey=$(jq -r .inbounds[1].streamSettings.realitySettings.publicKey "${row}.json")
-                currentRealityPrivateKey=$(jq -r .inbounds[1].streamSettings.realitySettings.privateKey "${row}.json")
+                currentRealityPublicKey=$(jq -r 'first(.inbounds[] | select(.streamSettings.realitySettings.publicKey != null) | .streamSettings.realitySettings.publicKey)' "${row}.json")
+                currentRealityPrivateKey=$(jq -r 'first(.inbounds[] | select(.streamSettings.realitySettings.privateKey != null) | .streamSettings.realitySettings.privateKey)' "${row}.json")
+                if [[ -z "${currentRealityPublicKey}" || "${currentRealityPublicKey}" == "null" ]] && [[ -n "${currentRealityPrivateKey}" && "${currentRealityPrivateKey}" != "null" ]]; then
+                    currentRealityPublicKey=$(/etc/v2ray-agent/xray/xray x25519 -i "${currentRealityPrivateKey}" | awk '/Password/{print $NF}')
+                fi
 
-                currentRealityMldsa65Seed=$(jq -r .inbounds[1].streamSettings.realitySettings.mldsa65Seed "${row}.json")
-                currentRealityMldsa65Verify=$(jq -r .inbounds[1].streamSettings.realitySettings.mldsa65Verify "${row}.json")
+                currentRealityMldsa65Seed=$(jq -r 'first(.inbounds[] | select(.streamSettings.realitySettings.mldsa65Seed != null) | .streamSettings.realitySettings.mldsa65Seed)' "${row}.json")
+                currentRealityMldsa65Verify=$(jq -r 'first(.inbounds[] | select(.streamSettings.realitySettings.mldsa65Verify != null) | .streamSettings.realitySettings.mldsa65Verify)' "${row}.json")
 
                 frontingTypeReality=07_VLESS_vision_reality_inbounds
 
@@ -891,8 +896,8 @@ readConfigHostPathUUID() {
         # reality
         if echo ${currentInstallProtocolType} | grep -q ",7,"; then
 
-            currentClients=$(jq -r .inbounds[1].settings.clients ${configPath}07_VLESS_vision_reality_inbounds.json)
-            currentUUID=$(jq -r .inbounds[1].settings.clients[0].id ${configPath}07_VLESS_vision_reality_inbounds.json)
+            currentClients=$(jq -c '(.inbounds[1].settings.clients // .inbounds[0].settings.clients)' ${configPath}07_VLESS_vision_reality_inbounds.json)
+            currentUUID=$(jq -r '(.inbounds[1].settings.clients[0].id // .inbounds[0].settings.clients[0].id)' ${configPath}07_VLESS_vision_reality_inbounds.json)
             xrayVLESSRealityVisionPort=$(jq -r .inbounds[0].port ${configPath}07_VLESS_vision_reality_inbounds.json)
             if [[ "${currentPort}" == "${xrayVLESSRealityVisionPort}" ]]; then
                 xrayVLESSRealityVisionPort="${currentDefaultPort}"
@@ -5651,7 +5656,7 @@ showAccounts() {
     # VLESS reality vision
     if echo ${currentInstallProtocolType} | grep -q ",7,"; then
         echoContent skyBlue "============================= VLESS reality_vision [推荐]  ==============================\n"
-        jq .inbounds[1].settings.clients//.inbounds[0].users ${configPath}07_VLESS_vision_reality_inbounds.json | jq -c '.[]' | while read -r user; do
+        jq -c '(.inbounds[1].settings.clients // .inbounds[0].settings.clients // .inbounds[0].users)[]?' ${configPath}07_VLESS_vision_reality_inbounds.json | while read -r user; do
             local email=
             email=$(echo "${user}" | jq -r .email//.name)
 
@@ -10752,7 +10757,7 @@ jiuheyiInstallDefaultSubscribe() {
             fi
         done
     fi
-    mkdir -p /etc/v2ray-agent/tls /etc/v2ray-agent/subscribe/default /etc/v2ray-agent/subscribe/sing-box /usr/share/nginx/html
+    mkdir -p "${nginxConfigPath}" /etc/v2ray-agent/tls /etc/v2ray-agent/subscribe/default /etc/v2ray-agent/subscribe/sing-box /usr/share/nginx/html
     local cert="/etc/v2ray-agent/tls/subscribe.crt"
     local key="/etc/v2ray-agent/tls/subscribe.key"
     if [[ -n "${domain}" && -s "/etc/aimilivpn/tls/fullchain.pem" && -s "/etc/aimilivpn/tls/privkey.pem" ]]; then
