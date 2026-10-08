@@ -2657,6 +2657,9 @@ checkGFWStatue() {
         echoContent green " ---> 服务启动成功"
     else
         echoContent red " ---> 服务启动失败，请检查终端是否有日志打印"
+        if [[ "${JIUHEYI_ONECLICK:-}" == "1" || "${AIMILI_SUITE:-}" == "1" ]]; then
+            exit 1
+        fi
         exit 0
     fi
 }
@@ -10967,6 +10970,7 @@ EOF
 jiuheyiOneClick() {
     export JIUHEYI_ONECLICK=1
     jiuheyiRecoverDisk || exit 1
+    mkdirTools
     if [[ "${AIMILI_ALLOW_EXISTING:-}" != "1" && "${JIUHEYI_FROM_AIMILI:-}" != "1" ]]; then
         if [[ -f /opt/aimilivpn/vpngate_data/state.json || -f /etc/v2ray-agent/xray/xray || -f /etc/v2ray-agent/sing-box/sing-box ]]; then
             echoContent red "检测到已有安装。请执行 vasma 修改，不要在已上线的机器上重装。"
