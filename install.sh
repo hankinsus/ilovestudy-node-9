@@ -6498,12 +6498,16 @@ removeUser() {
 # 更新脚本。只拉九合一自己的仓库，避免更新后又装回上游脚本。
 updateV2RayAgent() {
     echoContent skyBlue "\n进度  $1/${totalProgress} : 更新九合一脚本"
-    rm -rf /etc/v2ray-agent/install.sh
-    if ! jiuheyiFetch /etc/v2ray-agent/install.sh; then
+    local tmp
+    tmp=$(mktemp)
+    if ! jiuheyiFetch "${tmp}"; then
+        rm -f "${tmp}"
         echoContent red " ---> 更新失败，脚本没有下载到"
         exit 0
     fi
-    sudo chmod 700 /etc/v2ray-agent/install.sh
+    mv "${tmp}" /etc/v2ray-agent/install.sh
+    chmod 700 /etc/v2ray-agent/install.sh
+    ln -sfn /etc/v2ray-agent/install.sh /usr/bin/vasma
     local version
     version=$(grep '当前版本：' "/etc/v2ray-agent/install.sh" | head -1 | sed 's/.*当前版本：//;s/[[:space:]]*$//')
 
@@ -10297,8 +10301,8 @@ menu() {
     echoContent yellow "15.域名黑名单"
     echoContent skyBlue "-------------------------版本管理-----------------------------"
     echoContent yellow "16.core管理"
-    echoContent yellow "17.更新脚本"
-    echoContent yellow "18.安装BBR、DD脚本"
+    echoContent yellow "17.安装BBR、DD脚本"
+    echoContent yellow "18.更新脚本"
     echoContent skyBlue "-------------------------脚本管理-----------------------------"
     echoContent yellow "20.安装AimiliVPN"
     echoContent yellow "30.卸载脚本"
@@ -10363,10 +10367,10 @@ menu() {
         coreVersionManageMenu 1
         ;;
     17)
-        updateV2RayAgent 1
+        bbrInstall
         ;;
     18)
-        bbrInstall
+        updateV2RayAgent 1
         ;;
     20)
         jiuheyiInstallAimili
