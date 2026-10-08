@@ -6509,9 +6509,9 @@ updateV2RayAgent() {
     ln -sfn /etc/v2ray-agent/install.sh /usr/bin/vasma
     local version
     version=$(sed -n 's/^jiuheyi_version="\(.*\)"$/\1/p' /etc/v2ray-agent/install.sh | head -1)
+    [[ -n "${version}" ]] || version="${jiuheyi_version}"
 
     echoContent green "\n ---> 更新完毕"
-    echoContent yellow " ---> 请手动执行[vasma]打开脚本"
     echoContent green " ---> 当前版本：${version}\n"
     echo
     exit 0
