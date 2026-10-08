@@ -9527,7 +9527,13 @@ subscribe() {
     local showStatus=$2
     if [[ "${coreInstallType}" == "1" || "${coreInstallType}" == "2" ]]; then
 
-        if [[ -f "/etc/v2ray-agent/subscribe_local/subscribeSalt" && -n $(cat "/etc/v2ray-agent/subscribe_local/subscribeSalt") ]]; then
+    if [[ "${JIUHEYI_ONECLICK:-}" == "1" || "${AIMILI_SUITE:-}" == "1" ]]; then
+        if [[ -s /etc/v2ray-agent/subscribe_local/subscribeSalt ]]; then
+            subscribeSalt=$(cat /etc/v2ray-agent/subscribe_local/subscribeSalt)
+        else
+            subscribeSalt=$(initRandomSalt)
+        fi
+    elif [[ -f "/etc/v2ray-agent/subscribe_local/subscribeSalt" && -n $(cat "/etc/v2ray-agent/subscribe_local/subscribeSalt") ]]; then
             if [[ -z "${renewSalt}" ]]; then
                 read -r -p "读取到上次安装设置的Salt，是否使用上次生成的Salt ？[y/n]:" historySaltStatus
                 if [[ "${historySaltStatus}" == "y" ]]; then
@@ -9546,7 +9552,9 @@ subscribe() {
         if [[ -z "${subscribeSalt}" ]]; then
             subscribeSalt=$(initRandomSalt)
         fi
-        echoContent yellow "\n ---> Salt: ${subscribeSalt}"
+        if [[ "${JIUHEYI_ONECLICK:-}" != "1" && "${AIMILI_SUITE:-}" != "1" ]]; then
+            echoContent yellow "\n ---> Salt: ${subscribeSalt}"
+        fi
 
         echo "${subscribeSalt}" >/etc/v2ray-agent/subscribe_local/subscribeSalt
 
@@ -10722,7 +10730,9 @@ jiuheyiIssueDomainCert() {
         curl -fsSL https://get.acme.sh | sh -s email=admin@ilovestudycn.com >/etc/v2ray-agent/tls/acme.log 2>&1 || return 1
     fi
     handleNginx stop || true
-    if ! "$HOME/.acme.sh/acme.sh" --issue -d "${domain}" --standalone --httpport 80 --server letsencrypt --keylength ec-256 >>/etc/v2ray-agent/tls/acme.log 2>&1; then
+    local issue_status=0
+    "$HOME/.acme.sh/acme.sh" --issue -d "${domain}" --standalone --httpport 80 --server letsencrypt --keylength ec-256 >>/etc/v2ray-agent/tls/acme.log 2>&1 || issue_status=$?
+    if [[ "${issue_status}" -ne 0 && "${issue_status}" -ne 2 ]]; then
         handleNginx start || true
         return 1
     fi
