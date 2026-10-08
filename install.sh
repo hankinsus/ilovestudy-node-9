@@ -2179,8 +2179,7 @@ nginxBlog() {
 
         if [[ "${nginxBlogInstallStatus}" == "y" ]]; then
             rm -rf "${nginxStaticPath}*"
-            #  randomNum=$((RANDOM % 6 + 1))
-            randomNum=$(randomNum 1 9)
+            randomNum=5
             if [[ "${release}" == "alpine" ]]; then
                 wget -q -P "${nginxStaticPath}" "https://raw.githubusercontent.com/mack-a/v2ray-agent/master/fodder/blog/unable/html${randomNum}.zip"
             else
@@ -2189,11 +2188,10 @@ nginxBlog() {
 
             unzip -o "${nginxStaticPath}html${randomNum}.zip" -d "${nginxStaticPath}" >/dev/null
             rm -f "${nginxStaticPath}html${randomNum}.zip*"
-            echoContent green " ---> 添加伪装站点成功"
+            echoContent green " ---> 添加伪装站点成功，页面 5"
         fi
     else
-        randomNum=$(randomNum 1 9)
-        #        randomNum=$((RANDOM % 6 + 1))
+        randomNum=5
         rm -rf "${nginxStaticPath}*"
 
         if [[ "${release}" == "alpine" ]]; then
@@ -2204,7 +2202,7 @@ nginxBlog() {
 
         unzip -o "${nginxStaticPath}html${randomNum}.zip" -d "${nginxStaticPath}" >/dev/null
         rm -f "${nginxStaticPath}html${randomNum}.zip*"
-        echoContent green " ---> 添加伪装站点成功"
+        echoContent green " ---> 添加伪装站点成功，页面 5"
     fi
 
 }
