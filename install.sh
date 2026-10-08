@@ -10309,7 +10309,6 @@ menu() {
     echoContent red "=============================================================="
     mkdirTools
     aliasInstall
-    jiuheyiRepairKeepalive
     read -r -p "请选择:" selectInstallType
     case ${selectInstallType} in
     0)
