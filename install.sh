@@ -11167,7 +11167,7 @@ jiuheyiOneClick() {
     if [[ "${jiuheyiCoreChoice}" == "2" ]]; then
         selectCoreType=2
         singBoxVLESSRealityVisionPort=443
-        singBoxVLESSRealityGRPCPort=443
+        singBoxVLESSRealityGRPCPort=
         singBoxInstall
     else
         selectCoreType=1
