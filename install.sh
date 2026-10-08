@@ -6,6 +6,7 @@
 # 联合安装 AimiliVPN 时，出站为 127.0.0.1:8500，用户 socks5，密码 ilovestudy。
 # 检测区
 # -------------------------------------------------------------
+jiuheyi_version="V1.0.5"
 # 检查系统
 export LANG=en_US.UTF-8
 
@@ -6507,7 +6508,7 @@ updateV2RayAgent() {
     chmod 700 /etc/v2ray-agent/install.sh
     ln -sfn /etc/v2ray-agent/install.sh /usr/bin/vasma
     local version
-    version=$(grep '当前版本：' "/etc/v2ray-agent/install.sh" | head -1 | sed 's/.*当前版本：//;s/[[:space:]]*$//')
+    version=$(sed -n 's/^jiuheyi_version="\(.*\)"$/\1/p' /etc/v2ray-agent/install.sh | head -1)
 
     echoContent green "\n ---> 更新完毕"
     echoContent yellow " ---> 请手动执行[vasma]打开脚本"
@@ -10268,7 +10269,7 @@ menu() {
     cd "$HOME" || exit
     echoContent red "\n=============================================================="
     echoContent green "署名：我爱研究.ilovestudy"
-    echoContent green "当前版本：V1.0.5"
+    echoContent green "当前版本：${jiuheyi_version}"
     echoContent green "描述：九合一共存脚本\c"
     showInstallStatus
     checkWgetShowProgress
