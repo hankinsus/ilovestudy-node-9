@@ -1276,11 +1276,14 @@ installTools() {
     #        fi
     #    fi
 
-    if [[ "${selectCustomInstallType}" == "7" ]]; then
-        echoContent green " ---> 检测到无需依赖证书的服务，跳过安装"
+    if echo ",${selectCustomInstallType}," | grep -q ',7,' && ! echo ",${selectCustomInstallType}," | grep -Eq ',(0|1|2|3|4|5|12),'; then
+        echoContent green " ---> Reality 不需要证书，跳过"
+    elif [[ "${JIUHEYI_ONECLICK:-}" == "1" || "${AIMILI_SUITE:-}" == "1" ]]; then
+        echoContent green " ---> 使用本机证书，不安装 acme.sh"
     else
         if [[ ! -d "$HOME/.acme.sh" ]] || [[ -d "$HOME/.acme.sh" && -z $(find "$HOME/.acme.sh/acme.sh") ]]; then
             echoContent green " ---> 安装acme.sh"
+            mkdir -p /etc/v2ray-agent/tls
             curl -s https://get.acme.sh | sh >/etc/v2ray-agent/tls/acme.log 2>&1
 
             if [[ ! -d "$HOME/.acme.sh" ]] || [[ -z $(find "$HOME/.acme.sh/acme.sh") ]]; then
@@ -2007,6 +2010,12 @@ checkPort() {
 
 # 安装TLS
 installTLS() {
+    if [[ "${JIUHEYI_ONECLICK:-}" == "1" || "${AIMILI_SUITE:-}" == "1" ]]; then
+        echoContent skyBlue "\n进度  $1/${totalProgress} : 使用本机证书"
+        jiuheyiOwnCert "${domain}"
+        echoContent green " ---> 已生成本机证书，不使用 acme.sh"
+        return 0
+    fi
     echoContent skyBlue "\n进度  $1/${totalProgress} : 申请TLS证书\n"
     readAcmeTLS
     local tlsDomain=${domain}
@@ -10608,8 +10617,29 @@ jiuheyiDnsMenu() {
     esac
 }
 
+jiuheyiOwnCert() {
+    local name="${1:-${domain}}"
+    local ip cert key
+    mkdir -p /etc/v2ray-agent/tls
+    ip=$(curl -4fsS --max-time 5 https://api.ipify.org || echo "127.0.0.1")
+    [[ -n "${name}" ]] || name="${ip}"
+    cert="/etc/v2ray-agent/tls/${name}.crt"
+    key="/etc/v2ray-agent/tls/${name}.key"
+    if [[ -s "${cert}" && -s "${key}" ]]; then
+        return 0
+    fi
+    if ! openssl req -x509 -nodes -newkey rsa:2048 -days 36500 -keyout "${key}" -out "${cert}" -subj "/CN=${name}" -addext "subjectAltName=IP:${ip}${domain:+,DNS:${domain}}" >/dev/null 2>&1; then
+        openssl req -x509 -nodes -newkey rsa:2048 -days 3650 -keyout "${key}" -out "${cert}" -subj "/CN=${name}" >/dev/null 2>&1 || return 1
+    fi
+    chmod 600 "${key}" || true
+}
+
 jiuheyiIssueDomainCert() {
     [[ -n "${domain}" ]] || return 1
+    if [[ "${JIUHEYI_ONECLICK:-}" == "1" || "${AIMILI_SUITE:-}" == "1" ]]; then
+        jiuheyiOwnCert "${domain}"
+        return $?
+    fi
     if ! command -v acme.sh >/dev/null 2>&1; then
         if [[ -x "$HOME/.acme.sh/acme.sh" ]]; then
             ln -sfn "$HOME/.acme.sh/acme.sh" /usr/local/bin/acme.sh
