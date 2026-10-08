@@ -10976,6 +10976,12 @@ jiuheyiRealityReady() {
     [[ -x /etc/v2ray-agent/xray/xray && -s /etc/v2ray-agent/xray/conf/07_VLESS_vision_reality_inbounds.json ]]
 }
 
+jiuheyiNoDomainOnly() {
+    [[ -f /opt/aimilivpn/vpngate_data/state.json || -f /etc/v2ray-agent/sing-box/sing-box ]] && return 1
+    [[ -f /etc/v2ray-agent/xray/conf/02_VLESS_TCP_inbounds.json ]] && return 1
+    [[ -x /etc/v2ray-agent/xray/xray || -s /etc/v2ray-agent/xray/conf/07_VLESS_vision_reality_inbounds.json ]]
+}
+
 jiuheyiNoDomainBroken() {
     local cfg="/etc/v2ray-agent/xray/conf/07_VLESS_vision_reality_inbounds.json"
     [[ -s "${cfg}" ]] || return 0
@@ -10999,12 +11005,12 @@ jiuheyiJudgeEnvironment() {
     echoContent skyBlue "\n判断环境"
     echoContent green " ---> 系统 ${release:-未知} $(uname -m)"
     jiuheyiRecoverDisk || return 1
-    if [[ -f /opt/aimilivpn/vpngate_data/state.json || -f /etc/v2ray-agent/sing-box/sing-box ]] || { jiuheyiRealityReady && ! jiuheyiNoDomainBroken; }; then
+    if [[ -f /opt/aimilivpn/vpngate_data/state.json || -f /etc/v2ray-agent/sing-box/sing-box || -f /etc/v2ray-agent/xray/conf/02_VLESS_TCP_inbounds.json ]]; then
         echoContent red "检测到已有安装。请执行 vasma 修改，不要在已上线的机器上重装。"
         return 1
     fi
     if [[ -e /etc/v2ray-agent/xray || -e /etc/systemd/system/xray.service ]]; then
-        echoContent yellow " ---> 上次没有安装完成，已清掉后继续"
+        echoContent yellow " ---> 无域名 Reality，清掉后重新安装"
         jiuheyiClearPartial
     fi
     echoContent green " ---> 环境可以安装"
@@ -11180,7 +11186,7 @@ if [[ "${JIUHEYI_MENU_ONLY:-}" == "1" ]]; then
 elif [[ "${JIUHEYI_ONECLICK:-}" == "1" || "${JIUHEYI_FROM_AIMILI:-}" == "1" ]]; then
     jiuheyiOneClick
 elif [[ -f /etc/v2ray-agent/xray/xray || -f /etc/v2ray-agent/sing-box/sing-box ]]; then
-    if jiuheyiNoDomainBroken; then
+    if jiuheyiNoDomainOnly || jiuheyiNoDomainBroken; then
         jiuheyiOneClick
     else
         menu

@@ -10,7 +10,7 @@ grep -q '磁盘剩余不足 5G，跳过 4G 虚拟内存' "$script"
 grep -q 'systemctl unmask xray.service' "$script"
 grep -q 'Xray 程序没有安装成功，停止' "$script"
 grep -q '判断环境' "$script"
-grep -q '上次没有安装完成，已清掉后继续' "$script"
+grep -q '无域名 Reality，清掉后重新安装' "$script"
 grep -q '环境可以安装' "$script"
 grep -q 'apt-get install -y wget curl unzip' "$script"
 

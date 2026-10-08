@@ -22,7 +22,7 @@ jobs:
             echo "no-domain reality is still behind dokodemo" >&2
             exit 1
           fi
-          /etc/v2ray-agent/xray/xray run -test -confdir /etc/v2ray-agent/xray/conf
+          sudo /etc/v2ray-agent/xray/xray run -test -confdir /etc/v2ray-agent/xray/conf
           test ! -d /root/.acme.sh
           if [[ -L /etc/systemd/system/xray.service ]]; then
             echo "xray.service is still masked" >&2
