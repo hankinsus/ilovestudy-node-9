@@ -3915,6 +3915,18 @@ singBoxMergeConfig() {
 # 初始化sing-box端口
 initSingBoxPort() {
     local port=$1
+    # 一键安装不再追问端口。Reality 由调用方指定 443，其余协议落在 10001-39999。
+    if [[ "${JIUHEYI_ONECLICK:-}" == "1" || "${AIMILI_SUITE:-}" == "1" || "${JIUHEYI_FROM_AIMILI:-}" == "1" ]]; then
+        if [[ -z "${port}" ]]; then
+            port=$(jiuheyiPickPort)
+        fi
+        if ((port >= 1 && port <= 65535)); then
+            allowPort "${port}" || true
+            allowPort "${port}" "udp" || true
+            echo "${port}"
+        fi
+        return 0
+    fi
     # 一键已经指定端口时直接用，不再追问。没指定的协议仍按原始逻辑随机。
     if [[ "${AIMILI_SUITE:-}" == "1" && -n "${port}" ]]; then
         echo "${port}"
@@ -10820,7 +10832,35 @@ jiuheyiAskCore() {
     esac
 }
 
-# 一键只问三件事：内核、域名、伪装域名。其余按原始安装的默认值。
+# 一键只问域名、伪装域名。有域名再问内核。无域名只装 Reality，不装需要证书的节点。
+jiuheyiPrepareMachine() {
+    local swap_bytes=0
+    if swapon --show=SIZE --bytes --noheadings >/dev/null 2>&1; then
+        swap_bytes=$(swapon --show=SIZE --bytes --noheadings 2>/dev/null | awk '{s+=$1} END {print s+0}')
+    fi
+    if [[ "${swap_bytes}" -lt 4294967296 && ! -f /swapfile ]]; then
+        echoContent yellow " ---> 添加 4G 虚拟内存"
+        fallocate -l 4G /swapfile 2>/dev/null || dd if=/dev/zero of=/swapfile bs=1M count=4096 status=none
+        chmod 600 /swapfile
+        mkswap /swapfile >/dev/null
+        swapon /swapfile || true
+        grep -q '/swapfile' /etc/fstab 2>/dev/null || echo '/swapfile none swap sw 0 0' >>/etc/fstab
+    fi
+    modprobe tcp_bbr >/dev/null 2>&1 || true
+    if sysctl net.ipv4.tcp_available_congestion_control 2>/dev/null | grep -qw bbr; then
+        mkdir -p /etc/sysctl.d
+        cat >/etc/sysctl.d/99-jiuheyi-bbr.conf <<'EOF'
+net.core.default_qdisc = fq
+net.ipv4.tcp_congestion_control = bbr
+net.ipv4.ip_forward = 1
+EOF
+        sysctl -w net.core.default_qdisc=fq >/dev/null 2>&1 || true
+        sysctl -w net.ipv4.tcp_congestion_control=bbr >/dev/null 2>&1 || true
+        sysctl -p /etc/sysctl.d/99-jiuheyi-bbr.conf >/dev/null 2>&1 || true
+        echoContent green " ---> 已开启 BBR"
+    fi
+}
+
 jiuheyiOneClick() {
     if [[ "${AIMILI_ALLOW_EXISTING:-}" != "1" && "${JIUHEYI_FROM_AIMILI:-}" != "1" ]]; then
         if [[ -f /opt/aimilivpn/vpngate_data/state.json || -f /etc/v2ray-agent/xray/xray || -f /etc/v2ray-agent/sing-box/sing-box ]]; then
@@ -10829,6 +10869,7 @@ jiuheyiOneClick() {
             exit 1
         fi
     fi
+    jiuheyiPrepareMachine
 
     local install_aimili="${JIUHEYI_WITH_AIMILI:-}"
     if [[ "${JIUHEYI_FROM_AIMILI:-}" == "1" ]]; then
@@ -10836,9 +10877,43 @@ jiuheyiOneClick() {
         JIUHEYI_EGRESS="aimili"
     fi
 
+    if [[ -z "${domain}" && -t 0 && "${JIUHEYI_FROM_AIMILI:-}" != "1" ]]; then
+        read -r -p "请输入域名，直接回车表示无域名: " domain
+    fi
+    domain="$(printf '%s' "${domain:-}" | tr -d '[:space:]')"
+    export domain
+
+    if [[ -z "${JIUHEYI_REALITY_DOMAIN:-}" && -z "${realityServerName}" && -t 0 ]]; then
+        local camouflage_input=""
+        read -r -p "请输入伪装域名，直接回车使用 www.microsoft.com: " camouflage_input
+        camouflage_input="$(printf '%s' "${camouflage_input}" | tr -d '[:space:]')"
+        JIUHEYI_REALITY_DOMAIN="${camouflage_input:-www.microsoft.com}"
+    fi
+    jiuheyiChooseCamouflage
+
+    if [[ -z "${domain}" ]]; then
+        export AIMILI_SUITE=1
+        export JIUHEYI_EGRESS="${JIUHEYI_EGRESS:-}"
+        realityDomainPort=443
+        jiuheyiSaveScript
+        echoContent yellow "无域名，只安装 Reality，不安装需要域名证书的节点。REALITY 使用 443。"
+        if [[ "${JIUHEYI_CORE:-}" == "2" ]]; then
+            installSingBoxReality
+        else
+            installXrayReality
+        fi
+        aliasInstall
+        echoContent green "九合一安装完成。无域名 Reality 已安装，端口 443，伪装 ${realityServerName}。执行 vasma 可修改。"
+        return 0
+    fi
+
+    if [[ "${JIUHEYI_FROM_AIMILI:-}" == "1" && -z "${JIUHEYI_CORE:-}" ]]; then
+        JIUHEYI_CORE=1
+    fi
     jiuheyiAskCore
     if [[ "${jiuheyiCoreChoice}" == "3" ]]; then
         echoContent yellow "自定义安装。协议自己选，不再自动装完全部。"
+        export AIMILI_SUITE=1
         jiuheyiSaveScript
         selectInstallType=2
         selectCoreInstall
@@ -10846,24 +10921,7 @@ jiuheyiOneClick() {
         return 0
     fi
 
-    if [[ -z "${domain}" && -t 0 ]]; then
-        read -r -p "请输入域名（TLS 协议需要域名）: " domain
-        domain="$(printf '%s' "${domain}" | tr -d '[:space:]')"
-        while [[ -z "${domain}" ]]; do
-            echoContent red "全部协议安装需要域名。直接回车不能跳过。"
-            read -r -p "请输入域名: " domain
-            domain="$(printf '%s' "${domain}" | tr -d '[:space:]')"
-        done
-    fi
-    domain="$(printf '%s' "${domain:-}" | tr -d '[:space:]')"
-    if [[ -z "${domain}" ]]; then
-        echoContent red "全部协议安装需要域名。请设置域名后再执行。"
-        exit 1
-    fi
-    export domain
-    jiuheyiChooseCamouflage
     export JIUHEYI_EGRESS="${JIUHEYI_EGRESS:-}"
-
     if [[ "${install_aimili}" == "y" || "${install_aimili}" == "Y" ]]; then
         export JIUHEYI_EGRESS="aimili"
         local aimili_url="${AIMILI_INSTALL_URL:-https://raw.githubusercontent.com/hankinsus/aimili-vpngate-production/main/install.sh}"
@@ -10873,28 +10931,26 @@ jiuheyiOneClick() {
 
     export AIMILI_SUITE=1
     jiuheyiSaveScript
-    realityDomainPort="${realityDomainPort:-443}"
+    realityDomainPort=443
+    subscribePort=18443
     if [[ "${jiuheyiCoreChoice}" == "2" ]]; then
         selectCoreType=2
-        subscribePort=18443
+        singBoxVLESSRealityVisionPort=443
+        singBoxVLESSRealityGRPCPort=443
         singBoxInstall
+        echoContent green "九合一安装完成。sing-box 11 个协议已安装。REALITY 443，其余端口 10001-39999，订阅 ${subscribePort}，伪装 ${realityServerName}。执行 vasma 可修改。"
     else
         selectCoreType=1
         port=443
-        subscribePort=18443
         xrayCoreInstall
         handleXray stop || true
         jiuheyiTuneXray
         handleXray start || true
+        echoContent green "九合一安装完成。Xray 6 个协议已安装。节点端口 ${port}，订阅 ${subscribePort}，伪装 ${realityServerName}。执行 vasma 可修改。"
     fi
     jiuheyiInstallDefaultSubscribe
     handleNginx start || true
     aliasInstall
-    if [[ "${jiuheyiCoreChoice}" == "2" ]]; then
-        echoContent green "九合一安装完成。sing-box 11 个协议已安装。订阅 ${subscribePort}，伪装 ${realityServerName}。执行 vasma 可修改。"
-    else
-        echoContent green "九合一安装完成。Xray 6 个协议已安装。节点端口 ${port}，订阅 ${subscribePort}，伪装 ${realityServerName}。执行 vasma 可修改。"
-    fi
 }
 
 
