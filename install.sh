@@ -823,6 +823,9 @@ readSingBoxConfig() {
 
 # 读取上次安装的配置
 readLastInstallationConfig() {
+    if [[ "${JIUHEYI_ONECLICK:-}" == "1" || "${AIMILI_SUITE:-}" == "1" ]]; then
+        return 0
+    fi
     if [[ -n "${configPath}" ]]; then
         read -r -p "读取到上次安装的配置，是否使用 ？[y/n]:" lastInstallationConfigStatus
         if [[ "${lastInstallationConfigStatus}" == "y" ]]; then
@@ -2830,6 +2833,7 @@ handleSingBox() {
             echoContent yellow "请手动执行【 /etc/v2ray-agent/sing-box/sing-box merge config.json -C /etc/v2ray-agent/sing-box/conf/config/ -D /etc/v2ray-agent/sing-box/conf/ 】，查看错误日志"
             echo
             echoContent yellow "如上面命令没有错误，请手动执行【 /etc/v2ray-agent/sing-box/sing-box run -c /etc/v2ray-agent/sing-box/conf/config.json 】，查看错误日志"
+            aliasInstall
             exit 0
         fi
     elif [[ "$1" == "stop" ]]; then
@@ -6043,12 +6047,12 @@ unInstall() {
             echoContent green " ---> 删除sing-box开机自启完成"
         fi
     else
-        if [[ "${coreInstallType}" == "1" ]]; then
+        if [[ "${coreInstallType}" == "1" || -f /etc/v2ray-agent/xray/xray || -f /etc/systemd/system/xray.service ]]; then
             handleXray stop
             rm -rf /etc/systemd/system/xray.service
             echoContent green " ---> 删除Xray开机自启完成"
         fi
-        if [[ "${coreInstallType}" == "2" || -n "${singBoxConfigPath}" ]]; then
+        if [[ "${coreInstallType}" == "2" || -n "${singBoxConfigPath}" || -f /etc/v2ray-agent/sing-box/sing-box || -f /etc/systemd/system/sing-box.service ]]; then
             handleSingBox stop
             rm -rf /etc/systemd/system/sing-box.service
             echoContent green " ---> 删除sing-box开机自启完成"
@@ -11014,8 +11018,11 @@ jiuheyiJudgeEnvironment() {
     echoContent green " ---> 系统 ${release:-未知} $(uname -m)"
     jiuheyiRecoverDisk || return 1
     if [[ -f /opt/aimilivpn/vpngate_data/state.json || -f /etc/v2ray-agent/sing-box/sing-box || -f /etc/v2ray-agent/xray/conf/02_VLESS_TCP_inbounds.json ]]; then
-        echoContent red "检测到已有安装。请执行 vasma 修改，不要在已上线的机器上重装。"
-        return 1
+        echoContent yellow "检测到已有安装，进入管理菜单。要重装，先选 30 卸载。"
+        jiuheyiSaveScript
+        aliasInstall
+        menu
+        exit 0
     fi
     if [[ -e /etc/v2ray-agent/xray || -e /etc/systemd/system/xray.service ]]; then
         echoContent yellow " ---> 无域名 Reality，清掉后重新安装"
@@ -11098,6 +11105,8 @@ jiuheyiOneClick() {
         jiuheyiRecoverDisk || exit 1
     fi
     mkdirTools
+    jiuheyiSaveScript
+    aliasInstall
 
     local install_aimili="${JIUHEYI_WITH_AIMILI:-}"
     if [[ "${JIUHEYI_FROM_AIMILI:-}" == "1" ]]; then
