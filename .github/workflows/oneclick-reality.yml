@@ -10,13 +10,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install Reality without a domain
-        run: sudo JIUHEYI_REALITY_DOMAIN=www.microsoft.com bash "$GITHUB_WORKSPACE/install.sh"
+        run: sudo JIUHEYI_REALITY_DOMAIN=www.cloudflare.com bash "$GITHUB_WORKSPACE/install.sh"
       - name: Check the result
         run: |
           test -x /etc/v2ray-agent/xray/xray
           test -s /etc/v2ray-agent/xray/conf/07_VLESS_vision_reality_inbounds.json
           grep -q '"port": 443' /etc/v2ray-agent/xray/conf/07_VLESS_vision_reality_inbounds.json
-          grep -q 'www.microsoft.com' /etc/v2ray-agent/xray/conf/07_VLESS_vision_reality_inbounds.json
+          grep -q 'www.cloudflare.com' /etc/v2ray-agent/xray/conf/07_VLESS_vision_reality_inbounds.json
           grep -q '"protocol": "vless"' /etc/v2ray-agent/xray/conf/07_VLESS_vision_reality_inbounds.json
           if grep -q dokodemo-door /etc/v2ray-agent/xray/conf/07_VLESS_vision_reality_inbounds.json; then
             echo "no-domain reality is still behind dokodemo" >&2

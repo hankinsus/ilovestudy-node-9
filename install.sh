@@ -4065,15 +4065,14 @@ EOF
     fi
 
     if [[ ! -f "/etc/v2ray-agent/xray/conf/12_policy.json" ]]; then
-        # 与 00_policy 相同。connIdle 0 表示不按空闲时间掐连接，靠 TCP keepalive 保活。
-        # 旧的随机 250–300 秒会在约 5 分钟后主动断开，并且文件名更靠后，会盖掉 00_policy。
+        # connIdle 不能写 0。Xray 26 会把 0 当成马上断开。86400 秒内有流量就不会被策略掐掉。
         cat <<'EOF' >/etc/v2ray-agent/xray/conf/12_policy.json
 {
   "policy": {
       "levels": {
           "0": {
               "handshake": 4,
-              "connIdle": 0,
+              "connIdle": 86400,
               "uplinkOnly": 2,
               "downlinkOnly": 5
           }
@@ -9864,7 +9863,7 @@ checkRealityDest() {
 # 初始化客户端可用的ServersName
 initRealityClientServersName() {
     if [[ -z "${realityServerName}" || "${realityServerName}" == "null" ]]; then
-        realityServerName="${JIUHEYI_REALITY_DOMAIN:-www.microsoft.com}"
+        realityServerName="${JIUHEYI_REALITY_DOMAIN:-www.cloudflare.com}"
     fi
     if [[ "${AIMILI_SUITE:-}" == "1" ]]; then
         realityDomainPort="${realityDomainPort:-443}"
@@ -10389,7 +10388,7 @@ jiuheyiPolicyJson() {
   "policy": {
     "levels": {
       "0": {
-        "connIdle": 0,
+        "connIdle": 86400,
         "handshake": 4,
         "uplinkOnly": 2,
         "downlinkOnly": 5
@@ -10402,8 +10401,7 @@ EOF
 
 # 只修保活。不改 11 里的分流规则，也不在打开菜单时改 DNS 模式。
 # 12_policy 按文件名排在 00_policy 后面，Xray 合并时以后者为准，所以两份必须一样。
-# connIdle 0：Xray 不按空闲时间掐连接。TCP keepalive 30 秒主动探测，
-# 不等到大约 300 秒，避免中间设备把空闲连接拆掉。内容有变化才重载一次。
+# connIdle 不能写 0，Xray 26 会立刻断开。86400 秒内有流量就不按空闲掐连接。
 jiuheyiRepairKeepalive() {
     local xray_changed=0
     if [[ -d /etc/v2ray-agent/xray/conf ]]; then
@@ -10858,7 +10856,7 @@ jiuheyiChooseCamouflage() {
         return 0
     fi
     if [[ ! -t 0 ]]; then
-        realityServerName="www.microsoft.com"
+        realityServerName="www.cloudflare.com"
         realityDomainPort=443
         return 0
     fi
@@ -11135,9 +11133,9 @@ jiuheyiOneClick() {
     fi
     if [[ -z "${JIUHEYI_REALITY_DOMAIN:-}" && -z "${realityServerName}" && -t 0 ]]; then
         local camouflage_input=""
-        read -r -p "请输入伪装域名，直接回车使用 www.microsoft.com: " camouflage_input
+        read -r -p "请输入伪装域名，直接回车使用 www.cloudflare.com: " camouflage_input
         camouflage_input="$(printf '%s' "${camouflage_input}" | tr -d '[:space:]')"
-        JIUHEYI_REALITY_DOMAIN="${camouflage_input:-www.microsoft.com}"
+        JIUHEYI_REALITY_DOMAIN="${camouflage_input:-www.cloudflare.com}"
     fi
     jiuheyiChooseCamouflage
 
