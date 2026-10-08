@@ -2019,9 +2019,13 @@ checkPort() {
 # 安装TLS
 installTLS() {
     if [[ "${JIUHEYI_ONECLICK:-}" == "1" || "${AIMILI_SUITE:-}" == "1" ]]; then
-        echoContent skyBlue "\n进度  $1/${totalProgress} : 使用本机证书"
-        jiuheyiOwnCert "${domain}"
-        echoContent green " ---> 已生成本机证书，不使用 acme.sh"
+        echoContent skyBlue "\n进度  $1/${totalProgress} : 申请域名证书"
+        if jiuheyiIssueDomainCert; then
+            echoContent green " ---> 域名证书申请成功"
+        else
+            jiuheyiOwnCert "${domain}"
+            echoContent red " ---> 域名证书申请失败，已改用本机证书"
+        fi
         return 0
     fi
     echoContent skyBlue "\n进度  $1/${totalProgress} : 申请TLS证书\n"
@@ -2251,6 +2255,10 @@ handleNginx() {
             echoContent green " ---> Nginx启动成功"
         fi
 
+    elif [[ -n $(pgrep -f "nginx") ]] && [[ "$1" == "start" ]]; then
+        if nginx -t >/dev/null 2>&1; then
+            systemctl reload nginx >/dev/null 2>&1 || rc-service nginx reload >/dev/null 2>&1 || true
+        fi
     elif [[ -n $(pgrep -f "nginx") ]] && [[ "$1" == "stop" ]]; then
 
         if [[ "${release}" == "alpine" ]]; then
@@ -10704,24 +10712,28 @@ jiuheyiOwnCert() {
 
 jiuheyiIssueDomainCert() {
     [[ -n "${domain}" ]] || return 1
-    if [[ "${JIUHEYI_ONECLICK:-}" == "1" || "${AIMILI_SUITE:-}" == "1" ]]; then
-        jiuheyiOwnCert "${domain}"
-        return $?
+    mkdir -p /etc/v2ray-agent/tls
+    local cert="/etc/v2ray-agent/tls/${domain}.crt"
+    local key="/etc/v2ray-agent/tls/${domain}.key"
+    if [[ -s "${cert}" && -s "${key}" ]] && ! openssl verify -CAfile "${cert}" "${cert}" >/dev/null 2>&1; then
+        return 0
     fi
-    if ! command -v acme.sh >/dev/null 2>&1; then
-        if [[ -x "$HOME/.acme.sh/acme.sh" ]]; then
-            ln -sfn "$HOME/.acme.sh/acme.sh" /usr/local/bin/acme.sh
-        else
-            curl -fsSL https://get.acme.sh | sh -s email=admin@ilovestudycn.com || return 1
-            ln -sfn "$HOME/.acme.sh/acme.sh" /usr/local/bin/acme.sh || return 1
-        fi
+    if [[ ! -x "$HOME/.acme.sh/acme.sh" ]]; then
+        curl -fsSL https://get.acme.sh | sh -s email=admin@ilovestudycn.com >/etc/v2ray-agent/tls/acme.log 2>&1 || return 1
     fi
     handleNginx stop || true
-    acme.sh --issue -d "${domain}" --standalone --httpport 80 --server letsencrypt --keylength ec-256 || return 1
-    mkdir -p /etc/v2ray-agent/tls
-    acme.sh --install-cert -d "${domain}" --ecc \
-        --key-file "/etc/v2ray-agent/tls/${domain}.key" \
-        --fullchain-file "/etc/v2ray-agent/tls/${domain}.crt" || return 1
+    if ! "$HOME/.acme.sh/acme.sh" --issue -d "${domain}" --standalone --httpport 80 --server letsencrypt --keylength ec-256 >>/etc/v2ray-agent/tls/acme.log 2>&1; then
+        handleNginx start || true
+        return 1
+    fi
+    "$HOME/.acme.sh/acme.sh" --install-cert -d "${domain}" --ecc \
+        --key-file "${key}" \
+        --fullchain-file "${cert}" >>/etc/v2ray-agent/tls/acme.log 2>&1 || {
+        handleNginx start || true
+        return 1
+    }
+    chmod 600 "${key}" || true
+    handleNginx start || true
 }
 
 # 订阅固定走独立端口，默认 18443，不占用节点 443。
@@ -11048,21 +11060,32 @@ jiuheyiPrepareMachine() {
         avail=$(df -B1 / | awk 'NR==2{print $4}')
     fi
     if [[ "${swap_bytes}" -lt 4294967296 ]]; then
+        local swap_label="4G" swap_arg="4G" swap_count=4096 swap_need=2147483648
         if [[ "${avail:-0}" -lt 5368709120 ]]; then
-            echoContent yellow " ---> 磁盘剩余不足 5G，跳过 4G 虚拟内存，避免把磁盘写满"
+            swap_label="2G"
+            swap_arg="2G"
+            swap_count=2048
+            swap_need=2147483648
         else
-            echoContent yellow " ---> 添加 4G 虚拟内存。磁盘较慢时这里会停几十秒，随后继续"
+            swap_need=4294967296
+        fi
+        if [[ "${swap_bytes}" -ge "${swap_need}" ]]; then
+            echoContent green " ---> 虚拟内存已启用"
+        elif [[ "${avail:-0}" -lt $((swap_need + 300000000)) ]]; then
+            echoContent red " ---> 磁盘剩余不足，无法添加 ${swap_label} 虚拟内存"
+        else
+            echoContent yellow " ---> 添加 ${swap_label} 虚拟内存。磁盘较慢时这里会停几十秒，随后继续"
             swapoff /swapfile >/dev/null 2>&1 || true
             rm -f /swapfile
-            if ! fallocate -l 4G /swapfile 2>/dev/null; then
-                dd if=/dev/zero of=/swapfile bs=1M count=4096 status=progress || true
+            if ! fallocate -l "${swap_arg}" /swapfile 2>/dev/null; then
+                dd if=/dev/zero of=/swapfile bs=1M count="${swap_count}" status=progress || true
             fi
             chmod 600 /swapfile 2>/dev/null || true
             if ! mkswap /swapfile >/dev/null 2>&1 || ! swapon /swapfile >/dev/null 2>&1; then
                 swapoff /swapfile >/dev/null 2>&1 || true
                 rm -f /swapfile
                 echoContent yellow " ---> 快速分配不能当虚拟内存，改为直接写入"
-                if dd if=/dev/zero of=/swapfile bs=1M count=4096 status=progress; then
+                if dd if=/dev/zero of=/swapfile bs=1M count="${swap_count}" status=progress; then
                     chmod 600 /swapfile
                     mkswap /swapfile >/dev/null 2>&1 || true
                     swapon /swapfile >/dev/null 2>&1 || true
@@ -11070,10 +11093,10 @@ jiuheyiPrepareMachine() {
             fi
             if swapon --show=NAME --noheadings 2>/dev/null | grep -q '/swapfile'; then
                 grep -q '/swapfile' /etc/fstab 2>/dev/null || echo '/swapfile none swap sw 0 0' >>/etc/fstab
-                echoContent green " ---> 4G 虚拟内存已启用"
+                echoContent green " ---> ${swap_label} 虚拟内存已启用"
             else
                 rm -f /swapfile
-                echoContent yellow " ---> 虚拟内存未启用，继续安装"
+                echoContent red " ---> 虚拟内存未启用"
             fi
         fi
     fi
