@@ -9519,11 +9519,6 @@ subscribe() {
     local showStatus=$2
     if [[ "${coreInstallType}" == "1" || "${coreInstallType}" == "2" ]]; then
 
-        echoContent skyBlue "-------------------------备注---------------------------------"
-        echoContent yellow "# 查看订阅会重新生成本地账号的订阅"
-        echoContent red "# 需要手动输入md5加密的salt值，如果不了解使用随机即可"
-        echoContent yellow "# 不影响已添加的远程订阅的内容\n"
-
         if [[ -f "/etc/v2ray-agent/subscribe_local/subscribeSalt" && -n $(cat "/etc/v2ray-agent/subscribe_local/subscribeSalt") ]]; then
             if [[ -z "${renewSalt}" ]]; then
                 read -r -p "读取到上次安装设置的Salt，是否使用上次生成的Salt ？[y/n]:" historySaltStatus
