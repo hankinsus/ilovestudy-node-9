@@ -6512,6 +6512,57 @@ removeUser() {
     manageAccount 1
 }
 # 更新脚本。只拉九合一自己的仓库，避免更新后又装回上游脚本。
+jiuheyiUpdateInstalledCores() {
+    checkWgetShowProgress
+    local version current was_xray=0 was_sing=0
+    [[ -n $(pgrep -f "xray/xray" || true) ]] && was_xray=1
+    [[ -n $(pgrep -f "sing-box/sing-box" || true) ]] && was_sing=1
+
+    if [[ -x /etc/v2ray-agent/xray/xray && -n "${xrayCoreCPUVendor}" ]]; then
+        version=$(curl -fsSL --max-time 20 https://api.github.com/repos/XTLS/Xray-core/releases/latest | jq -r '.tag_name // empty')
+        current="v$(/etc/v2ray-agent/xray/xray --version | awk '{print $2}' | head -1)"
+        if [[ -z "${version}" || "${version}" == "${current}" ]]; then
+            echoContent green " ---> Xray 已是最新 ${current}"
+        else
+            echoContent yellow " ---> 更新 Xray ${current} -> ${version}"
+            [[ "${was_xray}" == "1" ]] && handleXray stop
+            if wget -q ${wgetShowProgressStatus} -O "/etc/v2ray-agent/xray/${xrayCoreCPUVendor}.zip" "https://github.com/XTLS/Xray-core/releases/download/${version}/${xrayCoreCPUVendor}.zip" && [[ -s "/etc/v2ray-agent/xray/${xrayCoreCPUVendor}.zip" ]]; then
+                unzip -o "/etc/v2ray-agent/xray/${xrayCoreCPUVendor}.zip" -d /etc/v2ray-agent/xray >/dev/null
+                rm -f "/etc/v2ray-agent/xray/${xrayCoreCPUVendor}.zip"
+                chmod 655 /etc/v2ray-agent/xray/xray
+                echoContent green " ---> Xray 已更新到 ${version}"
+            else
+                rm -f "/etc/v2ray-agent/xray/${xrayCoreCPUVendor}.zip"
+                echoContent red " ---> Xray 下载失败，保留当前版本"
+            fi
+            [[ "${was_xray}" == "1" ]] && handleXray start
+        fi
+    fi
+
+    if [[ -x /etc/v2ray-agent/sing-box/sing-box && -n "${singBoxCoreCPUVendor}" ]]; then
+        version=$(curl -fsSL --max-time 20 https://api.github.com/repos/SagerNet/sing-box/releases/latest | jq -r '.tag_name // empty')
+        current="v$(/etc/v2ray-agent/sing-box/sing-box version | awk '/sing-box version/{print $3}')"
+        if [[ -z "${version}" || "${version}" == "${current}" ]]; then
+            echoContent green " ---> sing-box 已是最新 ${current}"
+        else
+            echoContent yellow " ---> 更新 sing-box ${current} -> ${version}"
+            [[ "${was_sing}" == "1" ]] && handleSingBox stop
+            local tarname="sing-box-${version#v}${singBoxCoreCPUVendor}.tar.gz"
+            if wget -q ${wgetShowProgressStatus} -O "/etc/v2ray-agent/sing-box/${tarname}" "https://github.com/SagerNet/sing-box/releases/download/${version}/${tarname}" && [[ -s "/etc/v2ray-agent/sing-box/${tarname}" ]]; then
+                tar zxf "/etc/v2ray-agent/sing-box/${tarname}" -C /etc/v2ray-agent/sing-box/
+                mv "/etc/v2ray-agent/sing-box/sing-box-${version#v}${singBoxCoreCPUVendor}/sing-box" /etc/v2ray-agent/sing-box/sing-box
+                rm -rf "/etc/v2ray-agent/sing-box/${tarname}" "/etc/v2ray-agent/sing-box/sing-box-${version#v}${singBoxCoreCPUVendor}"
+                chmod 655 /etc/v2ray-agent/sing-box/sing-box
+                echoContent green " ---> sing-box 已更新到 ${version}"
+            else
+                rm -f "/etc/v2ray-agent/sing-box/${tarname}"
+                echoContent red " ---> sing-box 下载失败，保留当前版本"
+            fi
+            [[ "${was_sing}" == "1" ]] && handleSingBox start
+        fi
+    fi
+}
+
 updateV2RayAgent() {
     echoContent skyBlue "\n进度  $1/${totalProgress} : 更新九合一脚本"
     local tmp
@@ -6527,6 +6578,7 @@ updateV2RayAgent() {
     local version
     version=$(sed -n 's/^jiuheyi_version="\(.*\)"$/\1/p' /etc/v2ray-agent/install.sh | head -1)
     [[ -n "${version}" ]] || version="${jiuheyi_version}"
+    jiuheyiUpdateInstalledCores
 
     echoContent green "\n ---> 更新完毕"
     echoContent green " ---> 当前版本：${version}\n"
@@ -10318,7 +10370,7 @@ menu() {
     echoContent skyBlue "-------------------------版本管理-----------------------------"
     echoContent yellow "16.core管理"
     echoContent yellow "17.安装BBR、DD脚本"
-    echoContent yellow "18.更新脚本"
+    echoContent yellow "18.更新脚本和内核"
     echoContent skyBlue "-------------------------脚本管理-----------------------------"
     echoContent yellow "30.卸载脚本"
     echoContent red "=============================================================="
