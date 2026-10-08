@@ -1,0 +1,26 @@
+name: oneclick-reality
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+jobs:
+  no-domain-reality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Reality without a domain
+        run: sudo JIUHEYI_REALITY_DOMAIN=www.microsoft.com bash "$GITHUB_WORKSPACE/install.sh"
+      - name: Check the result
+        run: |
+          test -x /etc/v2ray-agent/xray/xray
+          test -s /etc/v2ray-agent/xray/conf/07_VLESS_vision_reality_inbounds.json
+          grep -q '"port": 443' /etc/v2ray-agent/xray/conf/07_VLESS_vision_reality_inbounds.json
+          grep -q 'www.microsoft.com' /etc/v2ray-agent/xray/conf/07_VLESS_vision_reality_inbounds.json
+          test ! -d /root/.acme.sh
+          if [[ -L /etc/systemd/system/xray.service ]]; then
+            echo "xray.service is still masked" >&2
+            exit 1
+          fi
+          systemctl is-active xray
+          df -B1 --output=avail / | awk 'NR==2{if ($1<800000000) exit 1}'

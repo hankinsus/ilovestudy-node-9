@@ -2436,17 +2436,26 @@ installXray() {
         fi
 
         echoContent green " ---> Xray-core版本:${version}"
+        mkdir -p /etc/v2ray-agent/xray || {
+            echoContent red " ---> 无法创建 Xray 目录，请检查磁盘空间。"
+            exit 1
+        }
         if [[ "${release}" == "alpine" ]]; then
             wget -c -q -P /etc/v2ray-agent/xray/ "https://github.com/XTLS/Xray-core/releases/download/${version}/${xrayCoreCPUVendor}.zip"
         else
             wget -c -q "${wgetShowProgressStatus}" -P /etc/v2ray-agent/xray/ "https://github.com/XTLS/Xray-core/releases/download/${version}/${xrayCoreCPUVendor}.zip"
         fi
 
-        if [[ ! -f "/etc/v2ray-agent/xray/${xrayCoreCPUVendor}.zip" ]]; then
+        if [[ ! -f "/etc/v2ray-agent/xray/${xrayCoreCPUVendor}.zip" || ! -s "/etc/v2ray-agent/xray/${xrayCoreCPUVendor}.zip" ]]; then
+            echoContent red " ---> Xray 核心下载失败。请确认磁盘剩余至少 1G，网络可访问 GitHub 后重试。"
+            if [[ "${JIUHEYI_ONECLICK:-}" == "1" || "${AIMILI_SUITE:-}" == "1" ]]; then
+                exit 1
+            fi
             read -r -p "核心下载失败，请重新尝试安装，是否重新尝试？[y/n]" downloadStatus
             if [[ "${downloadStatus}" == "y" ]]; then
                 installXray "$1"
             fi
+            return 0
         else
             unzip -o "/etc/v2ray-agent/xray/${xrayCoreCPUVendor}.zip" -d /etc/v2ray-agent/xray >/dev/null
             rm -rf "/etc/v2ray-agent/xray/${xrayCoreCPUVendor}.zip"
@@ -2475,6 +2484,10 @@ installXray() {
                 installXray "$1" "$2"
             fi
         fi
+    fi
+    if [[ ! -x "/etc/v2ray-agent/xray/xray" ]]; then
+        echoContent red " ---> Xray 程序没有安装成功，停止，避免继续写空配置。"
+        exit 1
     fi
 }
 
@@ -2719,8 +2732,11 @@ installXrayService() {
     echoContent skyBlue "\n进度  $1/${totalProgress} : 配置Xray开机自启"
     execStart='/etc/v2ray-agent/xray/xray run -confdir /etc/v2ray-agent/xray/conf'
     if [[ -n $(find /bin /usr/bin -name "systemctl") ]]; then
-        rm -rf /etc/systemd/system/xray.service
-        touch /etc/systemd/system/xray.service
+        systemctl unmask xray.service >/dev/null 2>&1 || true
+        if [[ -L /etc/systemd/system/xray.service ]]; then
+            rm -f /etc/systemd/system/xray.service
+        fi
+        rm -f /etc/systemd/system/xray.service
         cat <<EOF >/etc/systemd/system/xray.service
 [Unit]
 Description=Xray Service
@@ -2737,6 +2753,10 @@ LimitNOFILE=infinity
 WantedBy=multi-user.target
 EOF
         bootStartup "xray.service"
+        if systemctl is-enabled xray.service 2>/dev/null | grep -q masked; then
+            echoContent red " ---> Xray 服务仍被屏蔽，停止。"
+            exit 1
+        fi
         echoContent green " ---> 配置Xray开机自启成功"
     elif [[ "${release}" == "alpine" ]]; then
         installAlpineStartup "xray"
@@ -9859,18 +9879,15 @@ initXrayRealityPort() {
     fi
 
     if [[ -z "${realityPort}" ]]; then
-        #        if [[ -n "${port}" ]]; then
-        #            read -r -p "是否使用TLS+Vision端口 ？[y/n]:" realityPortTLSVisionStatus
-        #            if [[ "${realityPortTLSVisionStatus}" == "y" ]]; then
-        #                realityPort=${port}
-        #            fi
-        #        fi
-        #        if [[ -z "${realityPort}" ]]; then
+        if [[ "${JIUHEYI_ONECLICK:-}" == "1" || "${AIMILI_SUITE:-}" == "1" ]]; then
+            realityPort=443
+        else
         echoContent yellow "请输入端口，回车默认 443。若 443 被占用，请改填 10001-39999"
 
         read -r -p "端口:" realityPort
         if [[ -z "${realityPort}" ]]; then
             realityPort=443
+        fi
         fi
         # 原始安装里 TLS 节点默认也是 443。两个都写 443 时 Xray 起不来，Reality 让开。
         if [[ "${AIMILI_SUITE:-}" == "1" && "${realityPort}" == "${port}" && -n "${port}" ]]; then
@@ -10864,6 +10881,35 @@ jiuheyiAskCore() {
 }
 
 # 一键只问域名、伪装域名。有域名再问内核。无域名只装 Reality，不装需要证书的节点。
+jiuheyiDiskFreeBytes() {
+    local avail
+    avail=$(df -B1 --output=avail / 2>/dev/null | awk 'NR==2{print $1}')
+    if [[ -z "${avail}" ]]; then
+        avail=$(df -B1 / | awk 'NR==2{print $4}')
+    fi
+    printf '%s' "${avail:-0}"
+}
+
+jiuheyiRecoverDisk() {
+    swapoff /swapfile >/dev/null 2>&1 || true
+    chattr -i /swapfile >/dev/null 2>&1 || true
+    rm -f /swapfile >/dev/null 2>&1 || true
+    if [[ -e /swapfile ]]; then
+        echoContent red " ---> 无法删除 /swapfile。请先执行: swapoff /swapfile && chattr -i /swapfile && rm -f /swapfile"
+        df -h / || true
+        return 1
+    fi
+    rm -f /etc/v2ray-agent/xray/*.zip >/dev/null 2>&1 || true
+    local avail
+    avail=$(jiuheyiDiskFreeBytes)
+    echoContent green " ---> 磁盘可用 $((avail / 1024 / 1024)) MB"
+    if [[ "${avail}" -lt 800000000 ]]; then
+        echoContent red " ---> 磁盘剩余不足 800MB，停止安装。请先清理磁盘。"
+        df -h / || true
+        return 1
+    fi
+}
+
 jiuheyiPrepareMachine() {
     local swap_bytes=0 avail=0
     if swapon --show=SIZE --bytes --noheadings >/dev/null 2>&1; then
@@ -10874,8 +10920,8 @@ jiuheyiPrepareMachine() {
         avail=$(df -B1 / | awk 'NR==2{print $4}')
     fi
     if [[ "${swap_bytes}" -lt 4294967296 ]]; then
-        if [[ "${avail:-0}" -lt 4500000000 ]]; then
-            echoContent yellow " ---> 磁盘剩余不足 4G，跳过虚拟内存，继续安装"
+        if [[ "${avail:-0}" -lt 5368709120 ]]; then
+            echoContent yellow " ---> 磁盘剩余不足 5G，跳过 4G 虚拟内存，避免把磁盘写满"
         else
             echoContent yellow " ---> 添加 4G 虚拟内存。磁盘较慢时这里会停几十秒，随后继续"
             swapoff /swapfile >/dev/null 2>&1 || true
@@ -10920,6 +10966,7 @@ EOF
 
 jiuheyiOneClick() {
     export JIUHEYI_ONECLICK=1
+    jiuheyiRecoverDisk || exit 1
     if [[ "${AIMILI_ALLOW_EXISTING:-}" != "1" && "${JIUHEYI_FROM_AIMILI:-}" != "1" ]]; then
         if [[ -f /opt/aimilivpn/vpngate_data/state.json || -f /etc/v2ray-agent/xray/xray || -f /etc/v2ray-agent/sing-box/sing-box ]]; then
             echoContent red "检测到已有安装。请执行 vasma 修改，不要在已上线的机器上重装。"
