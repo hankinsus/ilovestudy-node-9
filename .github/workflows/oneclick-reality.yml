@@ -10,13 +10,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install Reality without a domain
-        run: sudo JIUHEYI_REALITY_DOMAIN=www.cloudflare.com bash "$GITHUB_WORKSPACE/install.sh"
+        run: sudo JIUHEYI_REALITY_DOMAIN=www.apple.com bash "$GITHUB_WORKSPACE/install.sh"
       - name: Check the result
         run: |
           test -x /etc/v2ray-agent/xray/xray
           test -s /etc/v2ray-agent/xray/conf/07_VLESS_vision_reality_inbounds.json
           grep -q '"port": 443' /etc/v2ray-agent/xray/conf/07_VLESS_vision_reality_inbounds.json
-          grep -q 'www.cloudflare.com' /etc/v2ray-agent/xray/conf/07_VLESS_vision_reality_inbounds.json
+          grep -q 'www.apple.com' /etc/v2ray-agent/xray/conf/07_VLESS_vision_reality_inbounds.json
           grep -q '"protocol": "vless"' /etc/v2ray-agent/xray/conf/07_VLESS_vision_reality_inbounds.json
           if grep -q dokodemo-door /etc/v2ray-agent/xray/conf/07_VLESS_vision_reality_inbounds.json; then
             echo "no-domain reality is still behind dokodemo" >&2
@@ -29,6 +29,8 @@ jobs:
             exit 1
           fi
           systemctl is-active xray
-          test -s /etc/nginx/conf.d/subscribe.conf
-          find /etc/v2ray-agent/subscribe/default -type f | grep -q .
+          if [[ -f /etc/nginx/conf.d/subscribe.conf ]]; then
+            echo "no-domain install should not create a subscription" >&2
+            exit 1
+          fi
           df -B1 --output=avail / | awk 'NR==2{if ($1<800000000) exit 1}'

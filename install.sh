@@ -9863,7 +9863,7 @@ checkRealityDest() {
 # 初始化客户端可用的ServersName
 initRealityClientServersName() {
     if [[ -z "${realityServerName}" || "${realityServerName}" == "null" ]]; then
-        realityServerName="${JIUHEYI_REALITY_DOMAIN:-www.cloudflare.com}"
+        realityServerName="${JIUHEYI_REALITY_DOMAIN:-www.apple.com}"
     fi
     if [[ "${AIMILI_SUITE:-}" == "1" ]]; then
         realityDomainPort="${realityDomainPort:-443}"
@@ -10856,7 +10856,7 @@ jiuheyiChooseCamouflage() {
         return 0
     fi
     if [[ ! -t 0 ]]; then
-        realityServerName="www.cloudflare.com"
+        realityServerName="www.apple.com"
         realityDomainPort=443
         return 0
     fi
@@ -11133,9 +11133,9 @@ jiuheyiOneClick() {
     fi
     if [[ -z "${JIUHEYI_REALITY_DOMAIN:-}" && -z "${realityServerName}" && -t 0 ]]; then
         local camouflage_input=""
-        read -r -p "请输入伪装域名，直接回车使用 www.cloudflare.com: " camouflage_input
+        read -r -p "请输入伪装域名，直接回车使用 www.apple.com: " camouflage_input
         camouflage_input="$(printf '%s' "${camouflage_input}" | tr -d '[:space:]')"
-        JIUHEYI_REALITY_DOMAIN="${camouflage_input:-www.cloudflare.com}"
+        JIUHEYI_REALITY_DOMAIN="${camouflage_input:-www.apple.com}"
     fi
     jiuheyiChooseCamouflage
 
@@ -11156,7 +11156,6 @@ jiuheyiOneClick() {
         else
             installXrayReality
         fi
-        jiuheyiInstallDefaultSubscribe || true
         aliasInstall
         jiuheyiPrepareMachine
         echoContent green "九合一安装完成。无域名 Reality 已安装，端口 443，伪装 ${realityServerName}。执行 vasma 可修改。"
