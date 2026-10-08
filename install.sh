@@ -2724,6 +2724,7 @@ After=network.target nss-lookup.target
 [Service]
 User=root
 WorkingDirectory=/root
+Environment=ENABLE_DEPRECATED_LEGACY_DOMAIN_STRATEGY_OPTIONS=true
 CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_SYS_PTRACE CAP_DAC_READ_SEARCH
 AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_SYS_PTRACE CAP_DAC_READ_SEARCH
 ExecStart=${execStart}
@@ -2814,9 +2815,25 @@ handleHysteria() {
 }
 
 # 操作sing-box
+jiuheyiEnableLegacyDomainStrategy() {
+    [[ -f /etc/systemd/system/sing-box.service ]] || return 0
+    local dir="/etc/systemd/system/sing-box.service.d"
+    local file="${dir}/legacy-domain-strategy.conf"
+    if [[ -f "${file}" ]] && grep -q ENABLE_DEPRECATED_LEGACY_DOMAIN_STRATEGY_OPTIONS "${file}"; then
+        return 0
+    fi
+    mkdir -p "${dir}"
+    cat >"${file}" <<'EOF'
+[Service]
+Environment=ENABLE_DEPRECATED_LEGACY_DOMAIN_STRATEGY_OPTIONS=true
+EOF
+    systemctl daemon-reload >/dev/null 2>&1 || true
+}
+
 handleSingBox() {
     if [[ -f "/etc/systemd/system/sing-box.service" ]]; then
         if [[ -z $(pgrep -f "sing-box") ]] && [[ "$1" == "start" ]]; then
+            jiuheyiEnableLegacyDomainStrategy
             singBoxMergeConfig
             systemctl start sing-box.service
         elif [[ -n $(pgrep -f "sing-box") ]] && [[ "$1" == "stop" ]]; then
