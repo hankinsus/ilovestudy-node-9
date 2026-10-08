@@ -29,4 +29,6 @@ jobs:
             exit 1
           fi
           systemctl is-active xray
+          test -s /etc/nginx/conf.d/subscribe.conf
+          find /etc/v2ray-agent/subscribe/default -type f | grep -q .
           df -B1 --output=avail / | awk 'NR==2{if ($1<800000000) exit 1}'

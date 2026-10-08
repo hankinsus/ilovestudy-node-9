@@ -4010,7 +4010,11 @@ initXrayConfig() {
     if [[ -z "${addClientsStatus}" ]]; then
         if [[ "${AIMILI_SUITE:-}" == "1" ]]; then
             uuid=$(/etc/v2ray-agent/xray/xray uuid)
-            customEmail="$(echo "${uuid}" | cut -d "-" -f 1)-XHTTP"
+            if [[ -n "${JIUHEYI_USER_PREFIX:-}" ]]; then
+                customEmail="${JIUHEYI_USER_PREFIX}-$(echo "${uuid}" | cut -d "-" -f 1)"
+            else
+                customEmail="$(echo "${uuid}" | cut -d "-" -f 1)-XHTTP"
+            fi
         else
         echoContent yellow "请输入自定义UUID[需合法]，[回车]随机UUID"
         read -r -p 'UUID:' customUUID
@@ -4575,6 +4579,9 @@ initSingBoxConfig() {
         read -r -p '用户名:' customEmail
         if [[ -z ${customEmail} ]]; then
             customEmail="$(echo "${uuid}" | cut -d "-" -f 1)-VLESS_TCP/TLS_Vision"
+        fi
+        if [[ -n "${JIUHEYI_USER_PREFIX:-}" ]]; then
+            customEmail="${JIUHEYI_USER_PREFIX}-$(echo "${uuid}" | cut -d "-" -f 1)"
         fi
     fi
 
@@ -9583,7 +9590,7 @@ subscribe() {
                     currentDomain="${currentHost}:${currentDefaultPort}"
                 fi
                 if [[ -n "${subscribePortLocal}" ]]; then
-                    if [[ "${subscribeType}" == "http" ]]; then
+                    if [[ "${subscribeType}" == "http" || -z "${currentHost}" ]]; then
                         currentDomain="$(getPublicIP):${subscribePort}"
                     else
                         currentDomain="${currentHost}:${subscribePort}"
@@ -10769,7 +10776,17 @@ jiuheyiInstallDefaultSubscribe() {
     local server_name="${domain:-$ip}"
     currentHost="${server_name}"
     if ! command -v nginx >/dev/null 2>&1; then
-        installNginxTools
+        if [[ "${JIUHEYI_ONECLICK:-}" == "1" || "${AIMILI_SUITE:-}" == "1" ]]; then
+            echoContent green " ---> 安装 Nginx，不更新系统"
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get install -y nginx >/tmp/jiuheyi-nginx.log 2>&1 || {
+                echoContent red " ---> Nginx 安装失败，没有订阅"
+                tail -n 20 /tmp/jiuheyi-nginx.log || true
+                return 1
+            }
+        else
+            installNginxTools
+        fi
     fi
     cat >"${nginxConfigPath}subscribe.conf" <<EOF
 server {
@@ -11111,6 +11128,12 @@ jiuheyiOneClick() {
     fi
     jiuheyiChooseCamouflage
 
+    if [[ -z "${JIUHEYI_USER_PREFIX:-}" && -t 0 && "${JIUHEYI_FROM_AIMILI:-}" != "1" ]]; then
+        read -r -p "请输入用户名前缀，直接回车随机: " JIUHEYI_USER_PREFIX
+    fi
+    JIUHEYI_USER_PREFIX="$(printf '%s' "${JIUHEYI_USER_PREFIX:-}" | tr -d ' /\\"'"'"'\n\r')"
+    export JIUHEYI_USER_PREFIX
+
     if [[ -z "${domain}" ]]; then
         export AIMILI_SUITE=1
         export JIUHEYI_EGRESS="${JIUHEYI_EGRESS:-}"
@@ -11122,6 +11145,7 @@ jiuheyiOneClick() {
         else
             installXrayReality
         fi
+        jiuheyiInstallDefaultSubscribe || true
         aliasInstall
         jiuheyiPrepareMachine
         echoContent green "九合一安装完成。无域名 Reality 已安装，端口 443，伪装 ${realityServerName}。执行 vasma 可修改。"
