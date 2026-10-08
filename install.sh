@@ -8848,6 +8848,12 @@ xrayCoreInstall() {
 # sing-box 全部安装
 singBoxInstall() {
     readLastInstallationConfig
+    if [[ "${JIUHEYI_ONECLICK:-}" == "1" || "${AIMILI_SUITE:-}" == "1" ]]; then
+        singBoxVLESSRealityVisionPort=443
+        if [[ -z "${singBoxVLESSRealityGRPCPort}" || "${singBoxVLESSRealityGRPCPort}" == "443" ]]; then
+            singBoxVLESSRealityGRPCPort=
+        fi
+    fi
     unInstallSubscribe
     # checkBTPanel
     # check1Panel
