@@ -6,7 +6,7 @@
 # 联合安装 AimiliVPN 时，出站为 127.0.0.1:8500，用户 socks5，密码 ilovestudy。
 # 检测区
 # -------------------------------------------------------------
-jiuheyi_version="V1.0.5"
+jiuheyi_version="V1.0.6"
 # 检查系统
 export LANG=en_US.UTF-8
 
@@ -11043,10 +11043,23 @@ jiuheyiDiskFreeBytes() {
     printf '%s' "${avail:-0}"
 }
 
+jiuheyiSwapfileActive() {
+    local swapfile="${JIUHEYI_SWAPFILE:-/swapfile}"
+    swapon --show=NAME --noheadings 2>/dev/null | awk '{print $1}' | grep -qx "${swapfile}"
+}
+
 jiuheyiRecoverDisk() {
-    swapoff /swapfile >/dev/null 2>&1 || true
-    chattr -ia /swapfile >/dev/null 2>&1 || true
-    rm -f /swapfile >/dev/null 2>&1 || true
+    local swapfile="${JIUHEYI_SWAPFILE:-/swapfile}"
+    # 正在使用的虚拟内存不能 swapoff。小内存机器上 swapoff 会被杀掉，文件还在，安装却停了。
+    if jiuheyiSwapfileActive; then
+        echoContent green " ---> 虚拟内存正在使用，跳过"
+    else
+        chattr -ia "${swapfile}" >/dev/null 2>&1 || true
+        rm -f "${swapfile}" >/dev/null 2>&1 || true
+        if [[ -e "${swapfile}" ]]; then
+            echoContent yellow " ---> 残留虚拟内存删不掉，已跳过"
+        fi
+    fi
     rm -f /etc/v2ray-agent/xray/*.zip >/dev/null 2>&1 || true
     local avail
     avail=$(jiuheyiDiskFreeBytes)
@@ -11056,10 +11069,6 @@ jiuheyiRecoverDisk() {
         avail=$(jiuheyiDiskFreeBytes)
     fi
     echoContent green " ---> 磁盘可用 $((avail / 1024 / 1024)) MB"
-    if [[ -e /swapfile ]]; then
-        echoContent red " ---> 残留虚拟内存删不掉，安装停止。"
-        return 1
-    fi
     if [[ "${avail}" -lt 800000000 ]]; then
         echoContent red " ---> 磁盘剩余不足 800MB，安装停止。"
         return 1
@@ -11128,6 +11137,7 @@ jiuheyiInstallDeps() {
 }
 
 jiuheyiPrepareMachine() {
+    local swapfile="${JIUHEYI_SWAPFILE:-/swapfile}"
     local swap_bytes=0 avail=0
     if swapon --show=SIZE --bytes --noheadings >/dev/null 2>&1; then
         swap_bytes=$(swapon --show=SIZE --bytes --noheadings 2>/dev/null | awk '{s+=$1} END {print s+0}')
@@ -11136,7 +11146,9 @@ jiuheyiPrepareMachine() {
     if [[ -z "${avail}" ]]; then
         avail=$(df -B1 / | awk 'NR==2{print $4}')
     fi
-    if [[ "${swap_bytes}" -lt 4294967296 ]]; then
+    if jiuheyiSwapfileActive || [[ "${swap_bytes}" -ge 4294967296 ]]; then
+        echoContent green " ---> 虚拟内存正在使用，跳过"
+    else
         local swap_label="4G" swap_arg="4G" swap_count=4096 swap_need=2147483648
         if [[ "${avail:-0}" -lt 5368709120 ]]; then
             swap_label="2G"
@@ -11146,33 +11158,30 @@ jiuheyiPrepareMachine() {
         else
             swap_need=4294967296
         fi
-        if [[ "${swap_bytes}" -ge "${swap_need}" ]]; then
-            echoContent green " ---> 虚拟内存已启用"
-        elif [[ "${avail:-0}" -lt $((swap_need + 300000000)) ]]; then
+        if [[ "${avail:-0}" -lt $((swap_need + 300000000)) ]]; then
             echoContent red " ---> 磁盘剩余不足，无法添加 ${swap_label} 虚拟内存"
         else
             echoContent yellow " ---> 添加 ${swap_label} 虚拟内存。磁盘较慢时这里会停几十秒，随后继续"
-            swapoff /swapfile >/dev/null 2>&1 || true
-            rm -f /swapfile
-            if ! fallocate -l "${swap_arg}" /swapfile 2>/dev/null; then
-                dd if=/dev/zero of=/swapfile bs=1M count="${swap_count}" status=progress || true
+            rm -f "${swapfile}"
+            if ! fallocate -l "${swap_arg}" "${swapfile}" 2>/dev/null; then
+                dd if=/dev/zero of="${swapfile}" bs=1M count="${swap_count}" status=progress || true
             fi
-            chmod 600 /swapfile 2>/dev/null || true
-            if ! mkswap /swapfile >/dev/null 2>&1 || ! swapon /swapfile >/dev/null 2>&1; then
-                swapoff /swapfile >/dev/null 2>&1 || true
-                rm -f /swapfile
+            chmod 600 "${swapfile}" 2>/dev/null || true
+            if ! mkswap "${swapfile}" >/dev/null 2>&1 || ! swapon "${swapfile}" >/dev/null 2>&1; then
+                swapoff "${swapfile}" >/dev/null 2>&1 || true
+                rm -f "${swapfile}"
                 echoContent yellow " ---> 快速分配不能当虚拟内存，改为直接写入"
-                if dd if=/dev/zero of=/swapfile bs=1M count="${swap_count}" status=progress; then
-                    chmod 600 /swapfile
-                    mkswap /swapfile >/dev/null 2>&1 || true
-                    swapon /swapfile >/dev/null 2>&1 || true
+                if dd if=/dev/zero of="${swapfile}" bs=1M count="${swap_count}" status=progress; then
+                    chmod 600 "${swapfile}"
+                    mkswap "${swapfile}" >/dev/null 2>&1 || true
+                    swapon "${swapfile}" >/dev/null 2>&1 || true
                 fi
             fi
-            if swapon --show=NAME --noheadings 2>/dev/null | grep -q '/swapfile'; then
-                grep -q '/swapfile' /etc/fstab 2>/dev/null || echo '/swapfile none swap sw 0 0' >>/etc/fstab
+            if swapon --show=NAME --noheadings 2>/dev/null | grep -qx "${swapfile}"; then
+                grep -qF "${swapfile}" /etc/fstab 2>/dev/null || echo "${swapfile} none swap sw 0 0" >>/etc/fstab
                 echoContent green " ---> ${swap_label} 虚拟内存已启用"
             else
-                rm -f /swapfile
+                rm -f "${swapfile}"
                 echoContent red " ---> 虚拟内存未启用"
             fi
         fi

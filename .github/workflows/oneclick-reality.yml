@@ -9,6 +9,10 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
+      - name: Guard and active-swap regression
+        run: |
+          bash tests/oneclick_guard_test.sh
+          bash tests/swap_skip_test.sh
       - name: Install Reality without a domain
         run: sudo JIUHEYI_REALITY_DOMAIN=www.apple.com bash "$GITHUB_WORKSPACE/install.sh"
       - name: Check the result

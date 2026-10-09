@@ -6,7 +6,11 @@ script="$root/install.sh"
 grep -q 'Reality 不需要证书，跳过' "$script"
 grep -q '使用本机证书，不安装 acme.sh' "$script"
 grep -q '磁盘剩余不足 800MB，安装停止' "$script"
-grep -q '磁盘剩余不足 5G，跳过 4G 虚拟内存' "$script"
+grep -q '虚拟内存正在使用，跳过' "$script"
+if grep -q '残留虚拟内存删不掉，安装停止' "$script"; then
+    echo "active swap still aborts install" >&2
+    exit 1
+fi
 grep -q 'systemctl unmask xray.service' "$script"
 grep -q 'Xray 程序没有安装成功，停止' "$script"
 grep -q '判断环境' "$script"
