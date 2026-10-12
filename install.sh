@@ -3,7 +3,7 @@
 # 署名: 我爱研究.ilovestudy
 # 独立仓库：https://github.com/hankinsus/ilovestudy-node-9
 # 一键默认按所选内核安装全部协议。Xray 节点 443，订阅 18443。伪装不选则用 www.microsoft.com。
-# 联合安装 AimiliVPN 时，出站为 127.0.0.1:8500，用户 socks5，密码 ilovestudy。
+# 联合安装 AimiliVPN 时，出站为 127.0.0.1:8500。账号读 /opt/aimilivpn/vpngate_data/proxy_auth.json，没有就用 socks5 / ilovestudy。
 # 检测区
 # -------------------------------------------------------------
 jiuheyi_version="V1.0.6"
@@ -3862,12 +3862,37 @@ singBoxHysteria2Install() {
     showAccounts 4
 }
 
+# 8500 出站账号：AimiliVPN 面板改过账号时以 /opt/aimilivpn/vpngate_data/proxy_auth.json 为准，
+# 没有这个文件（或读不出）就用默认 socks5 / ilovestudy。结果是 JSON 字符串（带引号）。
+aimiliSocksAuthJson() {
+    local authFile=/opt/aimilivpn/vpngate_data/proxy_auth.json
+    local user="socks5"
+    local pass="ilovestudy"
+    local u p
+    if [[ -s "${authFile}" ]] && command -v jq >/dev/null 2>&1; then
+        u=$(jq -r '.user // .username // empty' "${authFile}" 2>/dev/null)
+        p=$(jq -r '.password // .pass // empty' "${authFile}" 2>/dev/null)
+        if [[ -n "${u}" && -n "${p}" ]]; then
+            user="${u}"
+            pass="${p}"
+        fi
+    fi
+    if command -v jq >/dev/null 2>&1; then
+        aimiliSocksUserJson=$(jq -nc --arg v "${user}" '$v')
+        aimiliSocksPassJson=$(jq -nc --arg v "${pass}" '$v')
+    else
+        aimiliSocksUserJson="\"${user}\""
+        aimiliSocksPassJson="\"${pass}\""
+    fi
+}
+
 # AimiliVPN 是第九项。默认全部入站从这里出去，不再直连。
 installAimiliDefaultOutbound() {
     if [[ "${JIUHEYI_EGRESS:-}" != "aimili" ]]; then
         return 0
     fi
     mkdir -p /etc/v2ray-agent/sing-box/conf/config
+    aimiliSocksAuthJson
     cat <<EOF >/etc/v2ray-agent/sing-box/conf/config/socks5_outbound.json
 {
     "outbounds":[
@@ -3877,8 +3902,8 @@ installAimiliDefaultOutbound() {
           "server": "127.0.0.1",
           "server_port": 8500,
           "version": "5",
-          "username":"socks5",
-          "password":"ilovestudy",
+          "username":${aimiliSocksUserJson},
+          "password":${aimiliSocksPassJson},
           "domain_strategy": "$(jiuheyiSingboxDomainStrategy)"
         }
     ]
@@ -10670,7 +10695,8 @@ EOF
   }
 }
 EOF
-    cat <<'EOF' >/etc/v2ray-agent/xray/conf/zz_socks5_outbound.json
+    aimiliSocksAuthJson
+    cat <<EOF >/etc/v2ray-agent/xray/conf/zz_socks5_outbound.json
 {
   "outbounds": [
     {
@@ -10681,7 +10707,7 @@ EOF
           {
             "address": "127.0.0.1",
             "port": 8500,
-            "users": [{"user": "socks5", "pass": "ilovestudy"}]
+            "users": [{"user": ${aimiliSocksUserJson}, "pass": ${aimiliSocksPassJson}}]
           }
         ]
       }
