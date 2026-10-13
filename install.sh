@@ -2,11 +2,11 @@
 # 九合一 V1.0.1
 # 署名: 我爱研究.ilovestudy
 # 独立仓库：https://github.com/hankinsus/ilovestudy-node-9
-# 一键默认按所选内核安装全部协议。Xray 节点 443，订阅 18443。伪装不选则用 www.microsoft.com。
+# 一键默认按所选内核安装全部协议。Xray 节点 443，订阅 18443。伪装不选则自动挑一个本机能握手成功的（不再默认 www.microsoft.com）。
 # 联合安装 AimiliVPN 时，出站为 127.0.0.1:8500。账号读 /opt/aimilivpn/vpngate_data/proxy_auth.json，没有就用 socks5 / ilovestudy。
 # 检测区
 # -------------------------------------------------------------
-jiuheyi_version="V1.0.8"
+jiuheyi_version="V1.0.9"
 # 检查系统
 export LANG=en_US.UTF-8
 
@@ -8751,6 +8751,18 @@ customSingBoxInstall() {
     fi
 }
 
+# V1.0.9：本机装了 AimiliVPN 时，它的 8443 管理入口在 nginx 里。无域名 Reality 安装会停掉 nginx（且 handleNginx start 对只装 Reality 不启动），装完把 nginx 拉起来。
+jiuheyiRestoreAimiliNginx() {
+    [[ -f /etc/nginx/conf.d/aimilivpn-production.conf ]] || return 0
+    command -v nginx >/dev/null 2>&1 || return 0
+    ss -ltn 2>/dev/null | grep -qE '[:.]8443[[:space:]]' && return 0
+    if nginx -t >/dev/null 2>&1; then
+        systemctl enable nginx >/dev/null 2>&1 || true
+        systemctl restart nginx >/dev/null 2>&1 || rc-service nginx restart >/dev/null 2>&1 || true
+    fi
+    sleep 1
+    ss -ltn 2>/dev/null | grep -qE '[:.]8443[[:space:]]' || echoContent red " ---> AimiliVPN 8443 管理入口没有起来，请执行 nginx -t 查看"
+}
 # 一键无域名Xray-core Reality
 installXrayReality() {
     selectCustomInstallType=",7,"
@@ -8770,6 +8782,7 @@ installXrayReality() {
     handleXray stop
     jiuheyiTuneXray
     handleXray start
+    jiuheyiRestoreAimiliNginx
     # 生成账号
     checkGFWStatue 5
     showAccounts 6
@@ -8789,6 +8802,7 @@ installSingBoxReality() {
     cleanUp xrayDel
     handleSingBox stop
     handleSingBox start
+    jiuheyiRestoreAimiliNginx
     # 生成账号
     checkGFWStatue 5
     showAccounts 6
@@ -9967,12 +9981,38 @@ checkRealityDest() {
     fi
 }
 
+# V1.0.9：Reality 伪装站自动挑选。www.microsoft.com 在部分机房（如 Azure）上 Reality 握手不完成，客户端全部 EOF，不再作默认。
+# 依次试候选，xray tls ping 10 秒内带 SNI 握手成功且 TLS 1.3 的用第一个；没有 xray 时用 curl --tlsv1.3；都不行用 www.apple.com。
+jiuheyiPickRealityDomain() {
+    local d out
+    for d in ${JIUHEYI_REALITY_CANDIDATES:-www.apple.com dl.google.com addons.mozilla.org www.yahoo.co.jp}; do
+        if [[ -x /etc/v2ray-agent/xray/xray ]]; then
+            out=$(timeout 10 /etc/v2ray-agent/xray/xray tls ping "${d}" 2>/dev/null)
+            if echo "${out}" | grep -q "TLS ping finished" && echo "${out}" | grep -q "Handshake succeeded" && echo "${out}" | grep -q "TLS 1.3"; then
+                echo "${d}"; return 0
+            fi
+        elif curl -s -o /dev/null --tlsv1.3 --max-time 6 "https://${d}/"; then
+            echo "${d}"; return 0
+        fi
+    done
+    echo "www.apple.com"
+}
 # 初始化客户端可用的ServersName
 initRealityClientServersName() {
-    if [[ -z "${realityServerName}" || "${realityServerName}" == "null" ]]; then
-        realityServerName="${JIUHEYI_REALITY_DOMAIN:-www.apple.com}"
+    # V1.0.9：一键/无终端时本机域名（sslip.io 等）不当 Reality 伪装目标
+    if [[ -n "${domain}" && "${realityServerName}" == "${domain}" && -z "${JIUHEYI_REALITY_DOMAIN:-}" ]] && [[ ! -t 0 || -n "${JIUHEYI_ONECLICK:-}" ]]; then
+        realityServerName=
     fi
-    if [[ "${AIMILI_SUITE:-}" == "1" ]]; then
+    if [[ -z "${realityServerName}" || "${realityServerName}" == "null" ]]; then
+        realityServerName="${JIUHEYI_REALITY_DOMAIN:-$(jiuheyiPickRealityDomain)}"
+        # 一键或无终端时直接用挑好的，不再落到「用本机域名当 Reality 目标」（sing-box 一键曾因此用了 sslip.io 域名，Reality 全部握不上）
+        if [[ ! -t 0 || -n "${JIUHEYI_ONECLICK:-}" ]]; then
+            export JIUHEYI_REALITY_DOMAIN="${realityServerName}"
+        fi
+    fi
+    if [[ "${AIMILI_SUITE:-}" == "1" || -n "${JIUHEYI_REALITY_DOMAIN:-}" ]] || [[ -n "${realityServerName}" && ( ! -t 0 || -n "${JIUHEYI_ONECLICK:-}" ) ]]; then
+        # V1.0.9：一键已经选好（或自动挑好）伪装站，不再走下面的列表校验和「用本机域名」询问
+        [[ -n "${JIUHEYI_REALITY_DOMAIN:-}" ]] && realityServerName="${JIUHEYI_REALITY_DOMAIN}"
         realityDomainPort="${realityDomainPort:-443}"
         echoContent yellow "\n ---> 客户端可用域名: ${realityServerName}:${realityDomainPort}\n"
         return 0
@@ -10031,10 +10071,10 @@ initRealityClientServersName() {
             realityDomainPort=443
             echoContent skyBlue "\n================ 配置客户端可用的serverNames ===============\n"
             echoContent yellow "#注意事项"
-            echoContent yellow "回车默认 www.microsoft.com。不要所有机器都用同一个伪装域名\n"
-            read -r -p "请输入目标域名，[回车]www.microsoft.com:" realityServerName
+            echoContent yellow "回车自动挑一个本机能握手成功的伪装域名。不要所有机器都用同一个伪装域名\n"
+            read -r -p "请输入目标域名，[回车]自动挑选:" realityServerName
             if [[ -z "${realityServerName}" ]]; then
-                realityServerName="www.microsoft.com"
+                realityServerName="$(jiuheyiPickRealityDomain)"
                 realityDomainPort=443
             fi
             if echo "${realityServerName}" | grep -q ":"; then
@@ -10670,6 +10710,7 @@ jiuheyiRepairAfterUpdate() {
             echoContent red " ---> ${core} 用备份也没有起来：${jiuheyiCoreErr}。查看：journalctl -u ${core} -n 30 --no-pager"
         fi
     done
+    jiuheyiRestoreAimiliNginx
     printf '%s\n' "${jiuheyi_version}" >/etc/v2ray-agent/jiuheyi_repaired_version 2>/dev/null
     # 只留最近 5 份备份
     ls -1dt /etc/v2ray-agent/jiuheyi_backup/*/ 2>/dev/null | tail -n +6 | xargs -r rm -rf
@@ -11146,7 +11187,7 @@ jiuheyiSaveScript() {
     [[ -s /etc/v2ray-agent/install.sh ]] && chmod 700 /etc/v2ray-agent/install.sh || true
 }
 
-# 一键开始前选择伪装域名。不选则用微软，避免所有机器挤同一个目标。
+# 一键开始前选择伪装域名。不选则自动挑一个本机能握手成功的，避免所有机器挤同一个目标。
 jiuheyiChooseCamouflage() {
     if [[ "${realityServerName}" == "null" ]]; then
         realityServerName=""
@@ -11161,14 +11202,16 @@ jiuheyiChooseCamouflage() {
         return 0
     fi
     if [[ ! -t 0 ]]; then
-        realityServerName="www.apple.com"
+        realityServerName="$(jiuheyiPickRealityDomain)"
         realityDomainPort=443
+        # 后面 sing-box 的初始化只认 JIUHEYI_REALITY_DOMAIN，没有就会改用本机域名（sslip.io 之类，Reality 握不上）
+        export JIUHEYI_REALITY_DOMAIN="${realityServerName}"
         return 0
     fi
     echoContent skyBlue "\n================ 选择伪装域名 ================"
-    echoContent yellow "Reality 的伪装域名和握手地址用同一个。不选则用 www.microsoft.com。"
-    echoContent yellow "不要所有机器都用同一个，否则容易挤在一起出问题。"
-    echoContent yellow "1.www.microsoft.com（直接回车）"
+    echoContent yellow "Reality 的伪装域名和握手地址用同一个。不选则自动挑一个本机能握手成功的（apple / dl.google / mozilla / yahoo.co.jp）。"
+    echoContent yellow "不要所有机器都用同一个，否则容易挤在一起出问题。www.microsoft.com 在部分机房握手不完成，不再默认。"
+    echoContent yellow "1.自动挑选（直接回车）"
     echoContent yellow "2.www.apple.com"
     echoContent yellow "3.dl.google.com"
     echoContent yellow "4.addons.mozilla.org"
@@ -11182,10 +11225,10 @@ jiuheyiChooseCamouflage() {
         read -r -p "请输入伪装域名:" realityServerName
         realityServerName="$(printf '%s' "${realityServerName}" | tr -d '[:space:]')"
         if [[ -z "${realityServerName}" ]]; then
-            realityServerName="www.microsoft.com"
+            realityServerName="$(jiuheyiPickRealityDomain)"
         fi
         ;;
-    *) realityServerName="www.microsoft.com" ;;
+    *) realityServerName="$(jiuheyiPickRealityDomain)" ;;
     esac
     if echo "${realityServerName}" | grep -q ":"; then
         realityDomainPort="$(echo "${realityServerName}" | awk -F '[:]' '{print $2}')"
@@ -11193,6 +11236,7 @@ jiuheyiChooseCamouflage() {
     else
         realityDomainPort=443
     fi
+    export JIUHEYI_REALITY_DOMAIN="${realityServerName}"
     echoContent green " ---> 伪装: ${realityServerName}:${realityDomainPort}"
 }
 
@@ -11465,9 +11509,9 @@ jiuheyiOneClick() {
     fi
     if [[ -z "${JIUHEYI_REALITY_DOMAIN:-}" && -z "${realityServerName}" && -t 0 ]]; then
         local camouflage_input=""
-        read -r -p "请输入伪装域名，直接回车使用 www.apple.com: " camouflage_input
+        read -r -p "请输入伪装域名，直接回车自动挑选: " camouflage_input
         camouflage_input="$(printf '%s' "${camouflage_input}" | tr -d '[:space:]')"
-        JIUHEYI_REALITY_DOMAIN="${camouflage_input:-www.apple.com}"
+        JIUHEYI_REALITY_DOMAIN="${camouflage_input:-$(jiuheyiPickRealityDomain)}"
     fi
     jiuheyiChooseCamouflage
 
