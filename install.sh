@@ -6,7 +6,7 @@
 # 联合安装 AimiliVPN 时，出站为 127.0.0.1:8500。账号读 /opt/aimilivpn/vpngate_data/proxy_auth.json，没有就用 socks5 / ilovestudy。
 # 检测区
 # -------------------------------------------------------------
-jiuheyi_version="V1.0.6"
+jiuheyi_version="V1.0.7"
 # 检查系统
 export LANG=en_US.UTF-8
 
@@ -816,8 +816,8 @@ readSingBoxConfig() {
         fi
         if [[ -f "${singBoxConfigPath}06_hysteria2_inbounds.json" ]]; then
             hysteriaPort=$(jq -r '.inbounds[0].listen_port' "${singBoxConfigPath}06_hysteria2_inbounds.json")
-            hysteria2ClientUploadSpeed=$(jq -r '.inbounds[0].down_mbps' "${singBoxConfigPath}06_hysteria2_inbounds.json")
-            hysteria2ClientDownloadSpeed=$(jq -r '.inbounds[0].up_mbps' "${singBoxConfigPath}06_hysteria2_inbounds.json")
+            hysteria2ClientUploadSpeed=$(jq -r '.inbounds[0].down_mbps // empty' "${singBoxConfigPath}06_hysteria2_inbounds.json")
+            hysteria2ClientDownloadSpeed=$(jq -r '.inbounds[0].up_mbps // empty' "${singBoxConfigPath}06_hysteria2_inbounds.json")
         fi
     fi
 }
@@ -3117,23 +3117,18 @@ initHysteriaPort() {
 
 # 初始化hysteria网络信息
 initHysteria2Network() {
-
-    if [[ -z "${hysteria2ClientDownloadSpeed}" || -z "${hysteria2ClientUploadSpeed}" ]]; then
-        echoContent yellow "请输入本地带宽峰值的下行速度（默认：100，单位：Mbps）"
-        read -r -p "下行速度:" hysteria2ClientDownloadSpeed
-    fi
-    if [[ -z "${hysteria2ClientDownloadSpeed}" ]]; then
-        hysteria2ClientDownloadSpeed=100
-        echoContent green "\n ---> 下行速度: ${hysteria2ClientDownloadSpeed}\n"
-    fi
-
-    if [[ -z "${hysteria2ClientUploadSpeed}" ]]; then
-        echoContent yellow "请输入本地带宽峰值的上行速度（默认：50，单位：Mbps）"
-        read -r -p "上行速度:" hysteria2ClientUploadSpeed
-    fi
-    if [[ -z "${hysteria2ClientUploadSpeed}" ]]; then
-        hysteria2ClientUploadSpeed=50
-        echoContent green "\n ---> 上行速度: ${hysteria2ClientUploadSpeed}\n"
+    # 不再询问固定带宽。默认服务端 ignore_client_bandwidth：客户端改用 BBR 自适应，直连 1Gbps 和慢隧道都适用。
+    # 需要固定速率时设置环境变量 JIUHEYI_HY2_UP / JIUHEYI_HY2_DOWN（单位 Mbps，客户端视角）。
+    hysteria2ClientUploadSpeed="${JIUHEYI_HY2_UP:-}"
+    hysteria2ClientDownloadSpeed="${JIUHEYI_HY2_DOWN:-}"
+    if [[ -n "${hysteria2ClientUploadSpeed}" && -n "${hysteria2ClientDownloadSpeed}" ]]; then
+        hysteria2BandwidthJson="\"up_mbps\":${hysteria2ClientDownloadSpeed},\"down_mbps\":${hysteria2ClientUploadSpeed},"
+        echoContent green "\n ---> Hysteria2 固定带宽 上行 ${hysteria2ClientUploadSpeed} / 下行 ${hysteria2ClientDownloadSpeed} Mbps\n"
+    else
+        hysteria2ClientUploadSpeed=
+        hysteria2ClientDownloadSpeed=
+        hysteria2BandwidthJson="\"ignore_client_bandwidth\": true,"
+        echoContent green "\n ---> Hysteria2 带宽自适应（BBR）\n"
     fi
 }
 
@@ -3813,8 +3808,7 @@ initSingBoxHysteria2Config() {
             "listen": "::",
             "listen_port": ${hysteriaPort},
             "users": $(initXrayClients 6),
-            "up_mbps":${hysteria2ClientDownloadSpeed},
-            "down_mbps":${hysteria2ClientUploadSpeed},
+            ${hysteria2BandwidthJson}
             "tls": {
                 "enabled": true,
                 "server_name":"${currentHost}",
@@ -3904,6 +3898,8 @@ installAimiliDefaultOutbound() {
           "version": "5",
           "username":${aimiliSocksUserJson},
           "password":${aimiliSocksPassJson},
+          "tcp_keep_alive": "30s",
+          "tcp_keep_alive_interval": "15s",
           "domain_strategy": "$(jiuheyiSingboxDomainStrategy)"
         }
     ]
@@ -4439,8 +4435,7 @@ ${mldsaFields}
         "enabled": true,
         "destOverride": [
           "http",
-          "tls",
-          "quic"
+          "tls"
         ]
       }
     }
@@ -4507,32 +4502,12 @@ EOF
         "enabled": true,
         "destOverride": [
           "http",
-          "tls",
-          "quic"
+          "tls"
         ],
         "routeOnly": true
       }
     }
-  ],
-  "routing": {
-    "rules": [
-      {
-        "inboundTag": [
-          "dokodemo-in"
-        ],
-        "domain": [
-          "${realityServerName}"
-        ],
-        "outboundTag": "z_direct_outbound"
-      },
-      {
-        "inboundTag": [
-          "dokodemo-in"
-        ],
-        "outboundTag": "blackhole_out"
-      }
-    ]
-  }
+  ]
 }
 EOF
         fi
@@ -4873,8 +4848,7 @@ EOF
             "listen": "::",
             "listen_port": ${result[-1]},
             "users": $(initSingBoxClients 6),
-            "up_mbps":${hysteria2ClientDownloadSpeed},
-            "down_mbps":${hysteria2ClientUploadSpeed},
+            ${hysteria2BandwidthJson}
             "tls": {
                 "enabled": true,
                 "server_name":"${sslDomain}",
@@ -5319,11 +5293,15 @@ EOF
     alpn:
         - h3
     sni: ${currentHost}
+EOF
+        if [[ -n "${hysteria2ClientUploadSpeed}" && -n "${hysteria2ClientDownloadSpeed}" ]]; then
+            cat <<EOF >>"/etc/v2ray-agent/subscribe_local/clashMeta/${user}"
     up: "${hysteria2ClientUploadSpeed} Mbps"
     down: "${hysteria2ClientDownloadSpeed} Mbps"
 EOF
+        fi
 
-        singBoxSubscribeLocalConfig=$(jq -r ". += [{\"tag\":\"${email}\",\"type\":\"hysteria2\",\"server\":\"${currentHost}\",\"server_port\":${singBoxHysteria2Port},\"up_mbps\":${hysteria2ClientUploadSpeed},\"down_mbps\":${hysteria2ClientDownloadSpeed},\"password\":\"${id}\",\"tls\":{\"enabled\":true,\"server_name\":\"${currentHost}\",\"alpn\":[\"h3\"]}}]" "/etc/v2ray-agent/subscribe_local/sing-box/${user}")
+        singBoxSubscribeLocalConfig=$(jq -r ". += [{\"tag\":\"${email}\",\"type\":\"hysteria2\",\"server\":\"${currentHost}\",\"server_port\":${singBoxHysteria2Port},${hysteria2ClientUploadSpeed:+\"up_mbps\":${hysteria2ClientUploadSpeed},}${hysteria2ClientDownloadSpeed:+\"down_mbps\":${hysteria2ClientDownloadSpeed},}\"password\":\"${id}\",\"tls\":{\"enabled\":true,\"server_name\":\"${currentHost}\",\"alpn\":[\"h3\"]}}]" "/etc/v2ray-agent/subscribe_local/sing-box/${user}")
         echo "${singBoxSubscribeLocalConfig}" | jq . >"/etc/v2ray-agent/subscribe_local/sing-box/${user}"
 
 
@@ -5692,7 +5670,7 @@ showAccounts() {
 
             echoContent skyBlue "\n ---> 账号:${email}"
             echo
-            defaultBase64Code vlessReality "${xrayVLESSRealityVisionPort}${singBoxVLESSRealityVisionPort}" "${email}" "$(echo "${user}" | jq -r .id//.uuid)"
+            defaultBase64Code vlessReality "$(if [[ "${coreInstallType}" == "1" && -n "${xrayVLESSRealityVisionPort}" ]]; then echo "${xrayVLESSRealityVisionPort}"; else echo "${singBoxVLESSRealityVisionPort:-${xrayVLESSRealityVisionPort}}"; fi)" "${email}" "$(echo "${user}" | jq -r .id//.uuid)"
         done
     fi
     # VLESS reality gRPC
@@ -5704,7 +5682,7 @@ showAccounts() {
 
             echoContent skyBlue "\n ---> 账号:${email}"
             echo
-            defaultBase64Code vlessRealityGRPC "${xrayVLESSRealityVisionPort}${singBoxVLESSRealityGRPCPort}" "${email}" "$(echo "${user}" | jq -r .id//.uuid)"
+            defaultBase64Code vlessRealityGRPC "${singBoxVLESSRealityGRPCPort}" "${email}" "$(echo "${user}" | jq -r .id//.uuid)"
         done
     fi
     # tuic
@@ -6604,6 +6582,7 @@ updateV2RayAgent() {
     version=$(sed -n 's/^jiuheyi_version="\(.*\)"$/\1/p' /etc/v2ray-agent/install.sh | head -1)
     [[ -n "${version}" ]] || version="${jiuheyi_version}"
     jiuheyiUpdateInstalledCores
+    JIUHEYI_REPAIR_ONLY=1 bash /etc/v2ray-agent/install.sh || true
 
     echoContent green "\n ---> 更新完毕"
     echoContent green " ---> 当前版本：${version}\n"
@@ -10468,6 +10447,99 @@ menu() {
         ;;
     esac
 }
+# Reality Vision 有其它协议时是两段：dokodemo-in-VLESSReality 收进来，转给本机 127.0.0.1:45987。
+# 这一段必须直连。07 文件里自带的 routing 会被 09_routing / zz_egress 覆盖，所以规则写在最终生效的文件里。
+jiuheyiRealityLoopbackRule() {
+    printf '%s' '{"type": "field", "inboundTag": ["dokodemo-in-VLESSReality"], "outboundTag": "z_direct_outbound"}'
+}
+
+# 不分流时最终生效的是 09_routing.json：没有这条就加到最前面。
+jiuheyiPatchRoutingLoopback() {
+    local f=/etc/v2ray-agent/xray/conf/09_routing.json tmp
+    command -v jq >/dev/null 2>&1 || return 0
+    [[ -f /etc/v2ray-agent/xray/conf/07_VLESS_vision_reality_inbounds.json ]] || return 0
+    if [[ ! -f "${f}" ]]; then
+        printf '{"routing": {"rules": [%s]}}\n' "$(jiuheyiRealityLoopbackRule)" | jq . >"${f}"
+        return 0
+    fi
+    if jq -e '[.routing.rules[]? | select((.inboundTag // []) | index("dokodemo-in-VLESSReality"))] | length > 0' "${f}" >/dev/null 2>&1; then
+        return 0
+    fi
+    tmp="$(jq --argjson r "$(jiuheyiRealityLoopbackRule)" '.routing.rules = [$r] + (.routing.rules // [])' "${f}" 2>/dev/null || true)"
+    [[ -n "${tmp}" ]] && printf '%s\n' "${tmp}" >"${f}"
+}
+
+# 内存：只留在用的内核。sing-box GOMEMLIMIT 120MiB，Xray MemoryMax 150M（小内存机器上防止一个内核吃光内存）。
+jiuheyiMemoryTune() {
+    local changed=0 d
+    if [[ -f /etc/systemd/system/xray.service ]]; then
+        d=/etc/systemd/system/xray.service.d
+        if [[ ! -f "${d}/10-jiuheyi-memory.conf" ]]; then
+            mkdir -p "${d}"
+            printf '[Service]\nMemoryMax=%s\n' "${JIUHEYI_XRAY_MEMORY_MAX:-150M}" >"${d}/10-jiuheyi-memory.conf"
+            changed=1
+        fi
+    fi
+    if [[ -f /etc/systemd/system/sing-box.service ]]; then
+        d=/etc/systemd/system/sing-box.service.d
+        if [[ ! -f "${d}/10-jiuheyi-memory.conf" ]]; then
+            mkdir -p "${d}"
+            printf '[Service]\nEnvironment=GOMEMLIMIT=%s\n' "${JIUHEYI_SINGBOX_GOMEMLIMIT:-120MiB}" >"${d}/10-jiuheyi-memory.conf"
+            changed=1
+        fi
+    fi
+    [[ "${changed}" == "1" ]] && systemctl daemon-reload >/dev/null 2>&1
+    # 没有任何入站配置的内核不需要跑（例如 sing-box 接管后残留的 xray）。
+    if systemctl is-active --quiet xray 2>/dev/null && ! ls /etc/v2ray-agent/xray/conf/*inbounds*.json >/dev/null 2>&1; then
+        systemctl stop xray >/dev/null 2>&1; systemctl disable xray >/dev/null 2>&1
+        echoContent yellow " ---> Xray 没有入站配置，已停止"
+    fi
+    if systemctl is-active --quiet sing-box 2>/dev/null && ! ls /etc/v2ray-agent/sing-box/conf/config/*inbounds*.json >/dev/null 2>&1; then
+        systemctl stop sing-box >/dev/null 2>&1; systemctl disable sing-box >/dev/null 2>&1
+        echoContent yellow " ---> sing-box 没有入站配置，已停止"
+    fi
+    return 0
+}
+
+# 菜单 18 更新后由新脚本执行：重写出站分流（Reality 本机段直连）、sing-box 运行参数、内存限制，然后重启在跑的内核。
+jiuheyiRepairAfterUpdate() {
+    readInstallType
+    if [[ -d /etc/v2ray-agent/xray/conf ]]; then
+        local mode=direct
+        [[ -s /etc/v2ray-agent/jiuheyi_dns_mode ]] && mode=$(tr -d '[:space:]' </etc/v2ray-agent/jiuheyi_dns_mode)
+        if [[ "${mode}" == "global" ]]; then
+            jiuheyiApplyDnsMode global
+        else
+            jiuheyiPatchRoutingLoopback
+        fi
+        local f=/etc/v2ray-agent/xray/conf/07_VLESS_vision_reality_inbounds.json tmp
+        if [[ -f "${f}" ]] && command -v jq >/dev/null 2>&1; then
+            tmp="$(jq 'del(.routing) | .inbounds |= map(if .sniffing.destOverride then .sniffing.destOverride |= map(select(. != "quic")) else . end)' "${f}" 2>/dev/null || true)"
+            [[ -n "${tmp}" ]] && printf '%s\n' "${tmp}" >"${f}"
+        fi
+    fi
+    if [[ -f /etc/v2ray-agent/sing-box/conf/config/socks5_outbound.json ]] && command -v jq >/dev/null 2>&1; then
+        local tmp2
+        tmp2="$(jq '.outbounds |= map(if .type == "socks" then . + {"tcp_keep_alive":"30s","tcp_keep_alive_interval":"15s"} else . end)' /etc/v2ray-agent/sing-box/conf/config/socks5_outbound.json 2>/dev/null || true)"
+        [[ -n "${tmp2}" ]] && printf '%s\n' "${tmp2}" >/etc/v2ray-agent/sing-box/conf/config/socks5_outbound.json
+    fi
+    if [[ -f /etc/v2ray-agent/sing-box/conf/config/06_hysteria2_inbounds.json ]] && command -v jq >/dev/null 2>&1 && [[ -z "${JIUHEYI_HY2_UP:-}${JIUHEYI_HY2_DOWN:-}" ]]; then
+        local tmp3
+        tmp3="$(jq '.inbounds |= map(if .type == "hysteria2" then (del(.up_mbps, .down_mbps) + {"ignore_client_bandwidth": true}) else . end)' /etc/v2ray-agent/sing-box/conf/config/06_hysteria2_inbounds.json 2>/dev/null || true)"
+        [[ -n "${tmp3}" ]] && printf '%s\n' "${tmp3}" >/etc/v2ray-agent/sing-box/conf/config/06_hysteria2_inbounds.json
+    fi
+    jiuheyiMemoryTune
+    if [[ -n $(pgrep -f "xray/xray" || true) ]]; then
+        handleXray stop
+        handleXray start
+    fi
+    if [[ -n $(pgrep -f "sing-box/sing-box" || true) ]]; then
+        handleSingBox stop
+        handleSingBox start
+    fi
+    echoContent green " ---> 已修复 Reality Vision 本机转发分流，并更新出站保活和内存限制"
+}
+
 # 不分流：本机解析，IPv4 优先，没有 IPv4 再用 IPv6。全局分流：解析和访问都走 AimiliVPN 8500。
 # 分流规则本身不在这里改。11 里已经写好的 WARP / 自定义规则保持原样。
 jiuheyiPolicyJson() {
@@ -10598,14 +10670,7 @@ jiuheyiApplyIpStrategy() {
                 changed_xray=1
             fi
         fi
-        f="/etc/v2ray-agent/xray/conf/zz_egress.json"
-        if [[ -f "${f}" ]]; then
-            tmp="$(jq --arg s "${xray_strategy}" 'if .routing.domainStrategy then .routing.domainStrategy=$s else . end' "${f}" 2>/dev/null || true)"
-            if [[ -n "${tmp}" && "$(cat "${f}")" != "${tmp}" ]]; then
-                printf '%s\n' "${tmp}" >"${f}"
-                changed_xray=1
-            fi
-        fi
+        # zz_egress 的 domainStrategy 固定 AsIs：全局分流时域名交给 8500 解析，本机不再先查一次。
         for f in /etc/v2ray-agent/xray/conf/*direct*.json; do
             [[ -f "${f}" ]] || continue
             case "${f}" in
@@ -10675,6 +10740,7 @@ jiuheyiApplyDnsMode() {
 }
 EOF
         rm -f /etc/v2ray-agent/xray/conf/zz_socks5_outbound.json /etc/v2ray-agent/xray/conf/zz_egress.json
+        jiuheyiPatchRoutingLoopback
         return 0
     fi
     cat >/etc/v2ray-agent/xray/conf/00_dns.json <<EOF
@@ -10710,6 +10776,12 @@ EOF
             "users": [{"user": ${aimiliSocksUserJson}, "pass": ${aimiliSocksPassJson}}]
           }
         ]
+      },
+      "streamSettings": {
+        "sockopt": {
+          "tcpKeepAliveIdle": 30,
+          "tcpKeepAliveInterval": 15
+        }
       }
     }
   ]
@@ -10718,8 +10790,9 @@ EOF
     cat >/etc/v2ray-agent/xray/conf/zz_egress.json <<EOF
 {
   "routing": {
-    "domainStrategy": "${query_strategy}",
+    "domainStrategy": "AsIs",
     "rules": [
+      $(jiuheyiRealityLoopbackRule),
       {
         "type": "field",
         "domain": ["www.apple.com", "www.microsoft.com", "apple.com", "microsoft.com"],
@@ -11328,6 +11401,7 @@ jiuheyiOneClick() {
     handleNginx start || true
     aliasInstall
     jiuheyiPrepareMachine
+    jiuheyiMemoryTune
     if [[ "${jiuheyiCoreChoice}" == "2" ]]; then
         echoContent green "九合一安装完成。sing-box 11 个协议已安装。REALITY 443，其余端口 10001-39999，订阅 ${subscribePort}，伪装 ${realityServerName}。执行 vasma 可修改。"
     else
@@ -11337,6 +11411,10 @@ jiuheyiOneClick() {
 
 
 cronFunction
+if [[ "${JIUHEYI_REPAIR_ONLY:-}" == "1" ]]; then
+    jiuheyiRepairAfterUpdate
+    exit 0
+fi
 if [[ "$(basename "$0")" == "vasma" || "${JIUHEYI_MENU_ONLY:-}" == "1" ]]; then
     menu
 elif [[ "${JIUHEYI_ONECLICK:-}" == "1" || "${JIUHEYI_FROM_AIMILI:-}" == "1" ]]; then
