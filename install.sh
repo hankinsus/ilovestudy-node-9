@@ -6,7 +6,7 @@
 # 联合安装 AimiliVPN 时，出站为 127.0.0.1:8500。账号读 /opt/aimilivpn/vpngate_data/proxy_auth.json，没有就用 socks5 / ilovestudy。
 # 检测区
 # -------------------------------------------------------------
-jiuheyi_version="V1.0.7"
+jiuheyi_version="V1.0.8"
 # 检查系统
 export LANG=en_US.UTF-8
 
@@ -990,14 +990,14 @@ showInstallStatus() {
     if [[ -n "${coreInstallType}" ]]; then
         if [[ "${coreInstallType}" == 1 ]]; then
             if [[ -n $(pgrep -f "xray/xray") ]]; then
-                echoContent yellow "\n核心: Xray-core[运行中]"
+                echoContent green "\n核心: Xray-core[运行中]"
             else
                 echoContent yellow "\n核心: Xray-core[未运行]"
             fi
 
         elif [[ "${coreInstallType}" == 2 ]]; then
             if [[ -n $(pgrep -f "sing-box/sing-box") ]]; then
-                echoContent yellow "\n核心: sing-box[运行中]"
+                echoContent green "\n核心: sing-box[运行中]"
             else
                 echoContent yellow "\n核心: sing-box[未运行]"
             fi
@@ -3882,7 +3882,8 @@ aimiliSocksAuthJson() {
 
 # AimiliVPN 是第九项。默认全部入站从这里出去，不再直连。
 installAimiliDefaultOutbound() {
-    if [[ "${JIUHEYI_EGRESS:-}" != "aimili" ]]; then
+    # 安装时选了 AimiliVPN 出口，或之后菜单里加 sing-box 协议（Hysteria2/Tuic）时本机已是全局分流：都走 8500
+    if [[ "${JIUHEYI_EGRESS:-}" != "aimili" && "$(tr -d '[:space:]' </etc/v2ray-agent/jiuheyi_dns_mode 2>/dev/null)" != "global" ]]; then
         return 0
     fi
     mkdir -p /etc/v2ray-agent/sing-box/conf/config
@@ -6086,17 +6087,49 @@ unInstall() {
         fi
     fi
 
+    # 九合一用过的端口（删配置前读出来），用来去掉脚本加的防火墙放行。AimiliVPN 的端口不动。
+    local jiuheyiPorts p proto
+    jiuheyiPorts=$(cat /etc/v2ray-agent/xray/conf/*.json /etc/v2ray-agent/sing-box/conf/config/*.json 2>/dev/null | jq -r '(.inbounds // [])[] | (.port // .listen_port // empty) | tostring' 2>/dev/null | grep -E '^[0-9]+$' | sort -u)
+    for unit in xray sing-box; do
+        systemctl stop "${unit}" >/dev/null 2>&1
+        systemctl disable "${unit}" >/dev/null 2>&1
+        rm -rf "/etc/systemd/system/${unit}.service" "/etc/systemd/system/${unit}.service.d" "/etc/systemd/system/multi-user.target.wants/${unit}.service"
+        rm -f "/etc/init.d/${unit}"
+    done
+    pkill -f /etc/v2ray-agent/xray/xray >/dev/null 2>&1
+    pkill -f /etc/v2ray-agent/sing-box/sing-box >/dev/null 2>&1
+    systemctl daemon-reload >/dev/null 2>&1
+    systemctl reset-failed xray sing-box >/dev/null 2>&1
+    # 定时任务：只去掉九合一自己的（证书续期、geo 更新）
+    if crontab -l >/dev/null 2>&1; then
+        crontab -l 2>/dev/null | sed '/v2ray-agent/d;/vasma/d' | crontab - 2>/dev/null
+    fi
+    for p in ${jiuheyiPorts}; do
+        case "${p}" in 22 | 80 | 8443 | 8500 | 8501) continue ;; esac
+        for proto in tcp udp; do
+            if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
+                ufw delete allow "${p}/${proto}" >/dev/null 2>&1
+            elif systemctl is-active --quiet firewalld 2>/dev/null; then
+                firewall-cmd --zone=public --remove-port="${p}/${proto}" --permanent >/dev/null 2>&1
+            fi
+        done
+    done
+    systemctl is-active --quiet firewalld 2>/dev/null && firewall-cmd --reload >/dev/null 2>&1
+
     rm -rf /etc/v2ray-agent
     rm -rf ${nginxConfigPath}alone.conf
     rm -rf ${nginxConfigPath}checkPortOpen.conf >/dev/null 2>&1
     rm -rf "${nginxConfigPath}sing_box_VMess_HTTPUpgrade.conf" >/dev/null 2>&1
-    rm -rf ${nginxConfigPath}checkPortOpen.conf >/dev/null 2>&1
 
     unInstallSubscribe
 
     if [[ -d "${nginxStaticPath}" && -f "${nginxStaticPath}/check" ]]; then
         rm -rf "${nginxStaticPath}"
         echoContent green " ---> 删除伪装网站完成"
+    fi
+    # nginx、acme、curl/jq 等是 AimiliVPN 也在用的，不卸载；还有别的站点配置（如 AimiliVPN）时把 nginx 起回来。
+    if ls ${nginxConfigPath}*.conf >/dev/null 2>&1; then
+        systemctl start nginx >/dev/null 2>&1 || true
     fi
 
     rm -rf /usr/bin/vasma
@@ -6538,7 +6571,7 @@ jiuheyiUpdateInstalledCores() {
                 rm -f "/etc/v2ray-agent/xray/${xrayCoreCPUVendor}.zip"
                 echoContent red " ---> Xray 下载失败，保留当前版本"
             fi
-            [[ "${was_xray}" == "1" ]] && handleXray start
+            # 内核由随后的 jiuheyiRepairAfterUpdate 检查配置后重启并确认
         fi
     fi
 
@@ -6561,7 +6594,7 @@ jiuheyiUpdateInstalledCores() {
                 rm -f "/etc/v2ray-agent/sing-box/${tarname}"
                 echoContent red " ---> sing-box 下载失败，保留当前版本"
             fi
-            [[ "${was_sing}" == "1" ]] && handleSingBox start
+            # 内核由随后的 jiuheyiRepairAfterUpdate 检查配置后重启并确认
         fi
     fi
 }
@@ -9850,7 +9883,9 @@ initRealityKey() {
         realityPublicKey=${currentRealityPublicKey}
     fi
     if [[ -z "${realityPrivateKey}" ]]; then
-        if [[ "${selectCoreType}" == "2" || "${coreInstallType}" == "2" ]]; then
+        # sing-box 单独安装（含无域名 Reality）时没有 xray 可用来生成密钥
+        if [[ "${selectCoreType}" == "2" || "${coreInstallType}" == "2" ]] || [[ ! -x /etc/v2ray-agent/xray/xray && -x /etc/v2ray-agent/sing-box/sing-box ]]; then
+            mkdir -p /etc/v2ray-agent/sing-box/conf/config
             realityX25519Key=$(/etc/v2ray-agent/sing-box/sing-box generate reality-keypair)
             realityPrivateKey=$(echo "${realityX25519Key}" | head -1 | awk '{print $2}')
             realityPublicKey=$(echo "${realityX25519Key}" | tail -n 1 | awk '{print $2}')
@@ -10450,23 +10485,27 @@ menu() {
 # Reality Vision 有其它协议时是两段：dokodemo-in-VLESSReality 收进来，转给本机 127.0.0.1:45987。
 # 这一段必须直连。07 文件里自带的 routing 会被 09_routing / zz_egress 覆盖，所以规则写在最终生效的文件里。
 jiuheyiRealityLoopbackRule() {
-    printf '%s' '{"type": "field", "inboundTag": ["dokodemo-in-VLESSReality"], "outboundTag": "z_direct_outbound"}'
+    printf '%s' '{"type": "field", "ip": ["127.0.0.0/8", "::1/128"], "outboundTag": "z_direct_outbound"}, {"type": "field", "inboundTag": ["dokodemo-in-VLESSReality"], "outboundTag": "z_direct_outbound"}'
 }
 
-# 不分流时最终生效的是 09_routing.json：没有这条就加到最前面。
+# xray 多个文件都有 routing 时只有排在最后的生效。本机回环和 Reality 的 dokodemo 转发必须直连（进 8500 会被拒绝），
+# 所以每个带 routing 的文件都把这两条放在最前面；没有 09_routing.json 时新建一个。
 jiuheyiPatchRoutingLoopback() {
-    local f=/etc/v2ray-agent/xray/conf/09_routing.json tmp
+    local dir=/etc/v2ray-agent/xray/conf f tmp rules
     command -v jq >/dev/null 2>&1 || return 0
-    [[ -f /etc/v2ray-agent/xray/conf/07_VLESS_vision_reality_inbounds.json ]] || return 0
-    if [[ ! -f "${f}" ]]; then
-        printf '{"routing": {"rules": [%s]}}\n' "$(jiuheyiRealityLoopbackRule)" | jq . >"${f}"
-        return 0
+    [[ -d "${dir}" ]] || return 0
+    rules="[$(jiuheyiRealityLoopbackRule)]"
+    if [[ ! -f "${dir}/z_direct_outbound.json" ]]; then
+        printf '{"outbounds": [{"protocol": "freedom", "tag": "z_direct_outbound", "settings": {"domainStrategy": "UseIPv4v6"}}]}\n' | jq . >"${dir}/z_direct_outbound.json"
     fi
-    if jq -e '[.routing.rules[]? | select((.inboundTag // []) | index("dokodemo-in-VLESSReality"))] | length > 0' "${f}" >/dev/null 2>&1; then
-        return 0
+    if [[ ! -f "${dir}/09_routing.json" ]]; then
+        printf '{"routing": {"rules": %s}}\n' "${rules}" | jq . >"${dir}/09_routing.json"
     fi
-    tmp="$(jq --argjson r "$(jiuheyiRealityLoopbackRule)" '.routing.rules = [$r] + (.routing.rules // [])' "${f}" 2>/dev/null || true)"
-    [[ -n "${tmp}" ]] && printf '%s\n' "${tmp}" >"${f}"
+    for f in "${dir}"/*.json; do
+        jq -e 'has("routing")' "${f}" >/dev/null 2>&1 || continue
+        tmp="$(jq --argjson r "${rules}" '.routing.rules = ($r + ((.routing.rules // []) - $r))' "${f}" 2>/dev/null || true)"
+        [[ -n "${tmp}" ]] && printf '%s\n' "${tmp}" >"${f}"
+    done
 }
 
 # 内存：只留在用的内核。sing-box GOMEMLIMIT 120MiB，Xray MemoryMax 150M（小内存机器上防止一个内核吃光内存）。
@@ -10501,10 +10540,96 @@ jiuheyiMemoryTune() {
     return 0
 }
 
-# 菜单 18 更新后由新脚本执行：重写出站分流（Reality 本机段直连）、sing-box 运行参数、内存限制，然后重启在跑的内核。
+# sing-box 同一端口同一协议只能有一个入站。AimiliVPN 会加 02b_VLESS_TCP_443.json（VLESS TCP 443），
+# Reality 也在 443 时两个都绑 443，sing-box 起不来并反复重启。有冲突时把 02b 清空（保留文件，AimiliVPN 不会再写回）。
+jiuheyiSingboxPortConflicts() {
+    local dir=/etc/v2ray-agent/sing-box/conf/config
+    command -v jq >/dev/null 2>&1 || return 0
+    [[ -d "${dir}" ]] || return 0
+    local f443="${dir}/02b_VLESS_TCP_443.json"
+    if [[ -f "${f443}" ]] && jq -e '(.inbounds // []) | length > 0' "${f443}" >/dev/null 2>&1; then
+        local p others
+        p=$(jq -r '.inbounds[0].listen_port // empty' "${f443}")
+        others=$(find "${dir}" -maxdepth 1 -name '*.json' ! -name '02b_VLESS_TCP_443.json' -exec jq -r '(.inbounds // [])[] | select(.type != "hysteria2" and .type != "tuic") | .listen_port // empty' {} + 2>/dev/null | grep -cx "${p}" || true)
+        if [[ -n "${p}" && "${others}" != "0" ]]; then
+            printf '{"inbounds": []}\n' >"${f443}"
+        fi
+    fi
+    # 还有其它重复端口（同为 TCP 或同为 UDP）就报出来。
+    local dup
+    dup=$(find "${dir}" -maxdepth 1 -name '*.json' -exec jq -r '(.inbounds // [])[] | select(.listen_port) | "\(if (.type == "hysteria2" or .type == "tuic") then "udp" else "tcp" end)/\(.listen_port)"' {} + 2>/dev/null | sort | uniq -d)
+    if [[ -n "${dup}" ]]; then
+        echoContent red " ---> sing-box 入站端口重复：$(echo "${dup}" | tr '\n' ' ')"
+        return 1
+    fi
+    return 0
+}
+
+jiuheyiCoreCheck() {
+    if [[ "$1" == "sing-box" ]]; then
+        local tmpd
+        tmpd=$(mktemp -d)
+        /etc/v2ray-agent/sing-box/sing-box merge config.json -C /etc/v2ray-agent/sing-box/conf/config/ -D "${tmpd}" >/dev/null 2>&1 &&
+            ENABLE_DEPRECATED_LEGACY_DOMAIN_STRATEGY_OPTIONS=true /etc/v2ray-agent/sing-box/sing-box check -c "${tmpd}/config.json" >"${tmpd}/err" 2>&1
+        local rc=$?
+        [[ "${rc}" == "0" ]] || jiuheyiCoreErr=$(tail -3 "${tmpd}/err" 2>/dev/null)
+        rm -rf "${tmpd}"
+        return "${rc}"
+    fi
+    jiuheyiCoreErr=$(/etc/v2ray-agent/xray/xray run -test -confdir /etc/v2ray-agent/xray/conf 2>&1 | tail -3)
+    /etc/v2ray-agent/xray/xray run -test -confdir /etc/v2ray-agent/xray/conf >/dev/null 2>&1
+}
+
+# 内核起来并且端口在听才算好。
+jiuheyiCoreHealthy() {
+    local core=$1 i ports p
+    if [[ "${core}" == "sing-box" ]]; then
+        ports=$(cat /etc/v2ray-agent/sing-box/conf/config/*.json 2>/dev/null | jq -r '(.inbounds // [])[] | select(.type != "hysteria2" and .type != "tuic") | .listen_port // empty' 2>/dev/null | sort -u)
+    else
+        ports=$(cat /etc/v2ray-agent/xray/conf/*.json 2>/dev/null | jq -r '(.inbounds // [])[] | select((.listen // "") | startswith("127.") | not) | .port // empty' 2>/dev/null | grep -E '^[0-9]+$' | sort -u)
+    fi
+    for i in 1 2 3 4 5 6 7 8; do
+        sleep 1
+        systemctl is-active --quiet "${core}" 2>/dev/null || rc-service "${core}" status >/dev/null 2>&1 || continue
+        local miss=""
+        for p in ${ports}; do
+            ss -ltnH "sport = :${p}" 2>/dev/null | grep -q . || miss="${miss} ${p}"
+        done
+        if [[ -z "${miss}" ]]; then
+            sleep 2
+            systemctl is-active --quiet "${core}" 2>/dev/null || rc-service "${core}" status >/dev/null 2>&1 || return 1
+            return 0
+        fi
+        jiuheyiCoreErr="端口没有在听：${miss}"
+    done
+    [[ -n "${jiuheyiCoreErr}" ]] || jiuheyiCoreErr="服务没有起来"
+    return 1
+}
+
+jiuheyiCoreRestart() {
+    if [[ "$1" == "sing-box" ]]; then
+        systemctl stop sing-box >/dev/null 2>&1 || rc-service sing-box stop >/dev/null 2>&1
+        jiuheyiEnableLegacyDomainStrategy >/dev/null 2>&1 || true
+        singBoxMergeConfig
+        systemctl reset-failed sing-box >/dev/null 2>&1
+        systemctl start sing-box >/dev/null 2>&1 || rc-service sing-box start >/dev/null 2>&1
+    else
+        systemctl restart xray >/dev/null 2>&1 || { rc-service xray stop >/dev/null 2>&1; rc-service xray start >/dev/null 2>&1; }
+    fi
+}
+
+# 菜单 18 更新后由新脚本执行：重写出站分流（Reality 本机段直连）、Hysteria2 带宽、内存限制。
+# 改之前备份；改完先检查配置和端口，再重启用到的内核并确认在听；不行就恢复备份再起一次。成功时不输出。
 jiuheyiRepairAfterUpdate() {
     readInstallType
-    if [[ -d /etc/v2ray-agent/xray/conf ]]; then
+    local bak ok=1 core cores=""
+    bak=/etc/v2ray-agent/jiuheyi_backup/$(date +%Y%m%d%H%M%S)
+    mkdir -p "${bak}"
+    [[ -d /etc/v2ray-agent/xray/conf ]] && cp -a /etc/v2ray-agent/xray/conf "${bak}/xray-conf"
+    [[ -d /etc/v2ray-agent/sing-box/conf ]] && cp -a /etc/v2ray-agent/sing-box/conf "${bak}/sing-box-conf"
+    [[ -x /etc/v2ray-agent/xray/xray ]] && ls /etc/v2ray-agent/xray/conf/*inbounds*.json >/dev/null 2>&1 && cores="${cores} xray"
+    [[ -x /etc/v2ray-agent/sing-box/sing-box ]] && ls /etc/v2ray-agent/sing-box/conf/config/*inbounds*.json >/dev/null 2>&1 && cores="${cores} sing-box"
+    if [[ "${cores}" == *xray* ]]; then
         local mode=direct
         [[ -s /etc/v2ray-agent/jiuheyi_dns_mode ]] && mode=$(tr -d '[:space:]' </etc/v2ray-agent/jiuheyi_dns_mode)
         if [[ "${mode}" == "global" ]]; then
@@ -10518,26 +10643,37 @@ jiuheyiRepairAfterUpdate() {
             [[ -n "${tmp}" ]] && printf '%s\n' "${tmp}" >"${f}"
         fi
     fi
-    if [[ -f /etc/v2ray-agent/sing-box/conf/config/socks5_outbound.json ]] && command -v jq >/dev/null 2>&1; then
-        local tmp2
-        tmp2="$(jq '.outbounds |= map(if .type == "socks" then . + {"tcp_keep_alive":"30s","tcp_keep_alive_interval":"15s"} else . end)' /etc/v2ray-agent/sing-box/conf/config/socks5_outbound.json 2>/dev/null || true)"
-        [[ -n "${tmp2}" ]] && printf '%s\n' "${tmp2}" >/etc/v2ray-agent/sing-box/conf/config/socks5_outbound.json
-    fi
-    if [[ -f /etc/v2ray-agent/sing-box/conf/config/06_hysteria2_inbounds.json ]] && command -v jq >/dev/null 2>&1 && [[ -z "${JIUHEYI_HY2_UP:-}${JIUHEYI_HY2_DOWN:-}" ]]; then
+    # sing-box 的 socks5_outbound.json 由 AimiliVPN 管，这里不改（改了它会重写并重启 sing-box）。
+    if [[ "${cores}" == *sing-box* && -f /etc/v2ray-agent/sing-box/conf/config/06_hysteria2_inbounds.json ]] && command -v jq >/dev/null 2>&1 && [[ -z "${JIUHEYI_HY2_UP:-}${JIUHEYI_HY2_DOWN:-}" ]]; then
         local tmp3
         tmp3="$(jq '.inbounds |= map(if .type == "hysteria2" then (del(.up_mbps, .down_mbps) + {"ignore_client_bandwidth": true}) else . end)' /etc/v2ray-agent/sing-box/conf/config/06_hysteria2_inbounds.json 2>/dev/null || true)"
         [[ -n "${tmp3}" ]] && printf '%s\n' "${tmp3}" >/etc/v2ray-agent/sing-box/conf/config/06_hysteria2_inbounds.json
     fi
-    jiuheyiMemoryTune
-    if [[ -n $(pgrep -f "xray/xray" || true) ]]; then
-        handleXray stop
-        handleXray start
-    fi
-    if [[ -n $(pgrep -f "sing-box/sing-box" || true) ]]; then
-        handleSingBox stop
-        handleSingBox start
-    fi
-    echoContent green " ---> 已修复 Reality Vision 本机转发分流，并更新出站保活和内存限制"
+    [[ "${cores}" == *sing-box* ]] && { jiuheyiSingboxPortConflicts || ok=0; }
+    jiuheyiMemoryTune >/dev/null
+    for core in ${cores}; do
+        jiuheyiCoreErr=""
+        if [[ "${ok}" == "1" ]] && jiuheyiCoreCheck "${core}" && { jiuheyiCoreRestart "${core}"; jiuheyiCoreHealthy "${core}"; }; then
+            continue
+        fi
+        echoContent red " ---> ${core} 修复后没有起来：${jiuheyiCoreErr}"
+        echoContent yellow " ---> 已恢复修复前的配置（备份 ${bak}）"
+        if [[ "${core}" == "sing-box" && -d "${bak}/sing-box-conf" ]]; then
+            rm -rf /etc/v2ray-agent/sing-box/conf && cp -a "${bak}/sing-box-conf" /etc/v2ray-agent/sing-box/conf
+            jiuheyiSingboxPortConflicts >/dev/null 2>&1 || true
+        elif [[ "${core}" == "xray" && -d "${bak}/xray-conf" ]]; then
+            rm -rf /etc/v2ray-agent/xray/conf && cp -a "${bak}/xray-conf" /etc/v2ray-agent/xray/conf
+        fi
+        jiuheyiCoreErr=""
+        jiuheyiCoreRestart "${core}"
+        if ! jiuheyiCoreHealthy "${core}"; then
+            echoContent red " ---> ${core} 用备份也没有起来：${jiuheyiCoreErr}。查看：journalctl -u ${core} -n 30 --no-pager"
+        fi
+    done
+    printf '%s\n' "${jiuheyi_version}" >/etc/v2ray-agent/jiuheyi_repaired_version 2>/dev/null
+    # 只留最近 5 份备份
+    ls -1dt /etc/v2ray-agent/jiuheyi_backup/*/ 2>/dev/null | tail -n +6 | xargs -r rm -rf
+    return 0
 }
 
 # 不分流：本机解析，IPv4 优先，没有 IPv4 再用 IPv6。全局分流：解析和访问都走 AimiliVPN 8500。
@@ -10807,6 +10943,7 @@ EOF
   }
 }
 EOF
+    jiuheyiPatchRoutingLoopback
 }
 
 jiuheyiTuneXray() {
@@ -11317,10 +11454,10 @@ jiuheyiOneClick() {
         JIUHEYI_EGRESS="aimili"
     fi
 
-    if [[ -z "${domain}" && -t 0 && "${JIUHEYI_FROM_AIMILI:-}" != "1" ]]; then
+    if [[ -z "${domain}" && -z "${JIUHEYI_DOMAIN:-}" && -t 0 && "${JIUHEYI_FROM_AIMILI:-}" != "1" ]]; then
         read -r -p "请输入域名，直接回车表示无域名: " domain
     fi
-    domain="$(printf '%s' "${domain:-}" | tr -d '[:space:]')"
+    domain="$(printf '%s' "${domain:-${JIUHEYI_DOMAIN:-}}" | tr -d '[:space:]')"
     export domain
 
     if [[ "${realityServerName}" == "null" ]]; then
@@ -11414,6 +11551,11 @@ cronFunction
 if [[ "${JIUHEYI_REPAIR_ONLY:-}" == "1" ]]; then
     jiuheyiRepairAfterUpdate
     exit 0
+fi
+# 旧版菜单 18 只下载新脚本、不会执行修复：这一版的修复还没跑过时，第一次运行就先跑一次（成功时不输出）。
+if [[ "$(id -u)" == "0" && -d /etc/v2ray-agent && ( -x /etc/v2ray-agent/xray/xray || -x /etc/v2ray-agent/sing-box/sing-box ) ]] &&
+    [[ "$(cat /etc/v2ray-agent/jiuheyi_repaired_version 2>/dev/null)" != "${jiuheyi_version}" ]]; then
+    jiuheyiRepairAfterUpdate
 fi
 if [[ "$(basename "$0")" == "vasma" || "${JIUHEYI_MENU_ONLY:-}" == "1" ]]; then
     menu

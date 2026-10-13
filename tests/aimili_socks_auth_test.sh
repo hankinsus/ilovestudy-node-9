@@ -13,6 +13,9 @@ awk '
     /^jiuheyiApplyDnsMode\(\)/ {q=1}
     /^jiuheyiTuneXray\(\)/ {q=0}
     q {print}
+    /^jiuheyiRealityLoopbackRule\(\)/ {r=1}
+    /^jiuheyiMemoryTune\(\)/ {r=0}
+    r {print}
 ' "$script" | sed -e "s#/etc/v2ray-agent#$work/etc#g" -e "s#/opt/aimilivpn#$work/opt#g" >"$work/fns.sh"
 
 jiuheyiSingboxDomainStrategy() { printf 'prefer_ipv4'; }
