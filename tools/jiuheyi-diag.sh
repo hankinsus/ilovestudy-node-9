@@ -84,7 +84,7 @@ if [[ -n "${filter}" ]]; then
         if ($i ~ /^cwnd:/) cw += substr($i, 6)
         if ($i ~ /^retrans:/) { split(substr($i, 9), b, "/"); rt += b[2] }
         if ($i ~ /^mss:/) mss = substr($i, 5)
-        if ($i == "delivery_rate") { dr = $(i+1); if (dr ~ /Mbps/) d += dr + 0; else if (dr ~ /Kbps/) d += (dr + 0) / 1000 }
+        if ($i == "delivery_rate") { dr = $(i+1); v = dr + 0; if (dr ~ /Gbps$/) d += v * 1000; else if (dr ~ /Mbps$/) d += v; else if (dr ~ /Kbps$/) d += v / 1000; else if (dr ~ /bps$/) d += v / 1e6 }
       }
       ccs[cc]++
     }

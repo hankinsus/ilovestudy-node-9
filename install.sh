@@ -6,7 +6,7 @@
 # 联合安装 AimiliVPN 时，出站为 127.0.0.1:8500。账号读 /opt/aimilivpn/vpngate_data/proxy_auth.json，没有就用 socks5 / ilovestudy。
 # 检测区
 # -------------------------------------------------------------
-jiuheyi_version="V1.1.1"
+jiuheyi_version="V1.1.2"
 # 检查系统
 export LANG=en_US.UTF-8
 
@@ -6555,7 +6555,7 @@ jiuheyiUpdateInstalledCores() {
     [[ -n $(pgrep -f "sing-box/sing-box" || true) ]] && was_sing=1
 
     if [[ -x /etc/v2ray-agent/xray/xray && -n "${xrayCoreCPUVendor}" ]]; then
-        version=$(curl -fsSL --max-time 20 https://api.github.com/repos/XTLS/Xray-core/releases/latest | jq -r '.tag_name // empty')
+        version=$(jiuheyiLatestTag XTLS/Xray-core)
         current="v$(/etc/v2ray-agent/xray/xray --version | awk '{print $2}' | head -1)"
         if [[ -z "${version}" || "${version}" == "${current}" ]]; then
             echoContent green " ---> Xray 已是最新 ${current}"
@@ -6576,7 +6576,7 @@ jiuheyiUpdateInstalledCores() {
     fi
 
     if [[ -x /etc/v2ray-agent/sing-box/sing-box && -n "${singBoxCoreCPUVendor}" ]]; then
-        version=$(curl -fsSL --max-time 20 https://api.github.com/repos/SagerNet/sing-box/releases/latest | jq -r '.tag_name // empty')
+        version=$(jiuheyiLatestTag SagerNet/sing-box)
         current="v$(/etc/v2ray-agent/sing-box/sing-box version | awk '/sing-box version/{print $3}')"
         if [[ -z "${version}" || "${version}" == "${current}" ]]; then
             echoContent green " ---> sing-box 已是最新 ${current}"
@@ -10664,6 +10664,17 @@ jiuheyiCoreCheck() {
 }
 
 # 内核起来并且端口在听才算好。
+# V1.1.2：菜单 18 更新后打印生效的网络参数和内核内存限制
+jiuheyiShowTuneSummary() {
+    echoContent green " ---> 网络参数：拥塞 $(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null)/$(sysctl -n net.core.default_qdisc 2>/dev/null)，缓冲上限 $(( $(sysctl -n net.core.rmem_max 2>/dev/null || echo 0) / 1048576 ))M，空闲后慢启动 $(sysctl -n net.ipv4.tcp_slow_start_after_idle 2>/dev/null)，notsent_lowat $(sysctl -n net.ipv4.tcp_notsent_lowat 2>/dev/null)"
+    local f
+    f=/etc/systemd/system/sing-box.service.d/10-jiuheyi-memory.conf
+    [[ -f "${f}" ]] && echoContent green " ---> sing-box 内存限制：$(sed -n 's/^Environment=GOMEMLIMIT=//p' "${f}")（GOMEMLIMIT）"
+    f=/etc/systemd/system/xray.service.d/10-jiuheyi-memory.conf
+    [[ -f "${f}" ]] && echoContent green " ---> Xray 内存限制：$(sed -n 's/^MemoryMax=//p' "${f}")（MemoryMax）"
+    return 0
+}
+
 jiuheyiCoreHealthy() {
     local core=$1 i ports p
     if [[ "${core}" == "sing-box" ]]; then
@@ -10679,6 +10690,7 @@ jiuheyiCoreHealthy() {
             ss -ltnH "sport = :${p}" 2>/dev/null | grep -q . || miss="${miss} ${p}"
         done
         if [[ -z "${miss}" ]]; then
+            jiuheyiCorePorts="$(echo ${ports} | tr '\n' ' ')"
             sleep 2
             systemctl is-active --quiet "${core}" 2>/dev/null || rc-service "${core}" status >/dev/null 2>&1 || return 1
             return 0
@@ -10702,7 +10714,8 @@ jiuheyiCoreRestart() {
 }
 
 # 菜单 18 更新后由新脚本执行：重写出站分流（Reality 本机段直连）、Hysteria2 带宽、内存限制。
-# 改之前备份；改完先检查配置和端口，再重启用到的内核并确认在听；不行就恢复备份再起一次。成功时不输出。
+# 改之前备份；改完先检查配置和端口，再重启用到的内核并确认在听；不行就恢复备份再起一次。
+# V1.1.2：每次都重启并打印结果（已重启哪个内核、端口在听），以及生效的网络参数和内存限制。
 jiuheyiRepairAfterUpdate() {
     readInstallType
     local bak ok=1 core cores=""
@@ -10736,7 +10749,9 @@ jiuheyiRepairAfterUpdate() {
     jiuheyiMemoryTune >/dev/null
     for core in ${cores}; do
         jiuheyiCoreErr=""
+        jiuheyiCorePorts=""
         if [[ "${ok}" == "1" ]] && jiuheyiCoreCheck "${core}" && { jiuheyiCoreRestart "${core}"; jiuheyiCoreHealthy "${core}"; }; then
+            echoContent green " ---> 已重启 ${core}，端口在听：${jiuheyiCorePorts:-（无 TCP 端口）}"
             continue
         fi
         echoContent red " ---> ${core} 修复后没有起来：${jiuheyiCoreErr}"
@@ -10751,8 +10766,11 @@ jiuheyiRepairAfterUpdate() {
         jiuheyiCoreRestart "${core}"
         if ! jiuheyiCoreHealthy "${core}"; then
             echoContent red " ---> ${core} 用备份也没有起来：${jiuheyiCoreErr}。查看：journalctl -u ${core} -n 30 --no-pager"
+        else
+            echoContent yellow " ---> 已用备份重启 ${core}，端口在听：${jiuheyiCorePorts:-（无 TCP 端口）}"
         fi
     done
+    jiuheyiShowTuneSummary
     jiuheyiRestoreAimiliNginx
     printf '%s\n' "${jiuheyi_version}" >/etc/v2ray-agent/jiuheyi_repaired_version 2>/dev/null
     # 只留最近 5 份备份
@@ -11639,7 +11657,7 @@ if [[ "${JIUHEYI_REPAIR_ONLY:-}" == "1" ]]; then
     jiuheyiRepairAfterUpdate
     exit 0
 fi
-# 旧版菜单 18 只下载新脚本、不会执行修复：这一版的修复还没跑过时，第一次运行就先跑一次（成功时不输出）。
+# 旧版菜单 18 只下载新脚本、不会执行修复：这一版的修复还没跑过时，第一次运行就先跑一次。
 if [[ "$(id -u)" == "0" && -d /etc/v2ray-agent && ( -x /etc/v2ray-agent/xray/xray || -x /etc/v2ray-agent/sing-box/sing-box ) ]] &&
     [[ "$(cat /etc/v2ray-agent/jiuheyi_repaired_version 2>/dev/null)" != "${jiuheyi_version}" ]]; then
     jiuheyiRepairAfterUpdate
