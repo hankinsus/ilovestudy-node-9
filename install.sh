@@ -6,7 +6,7 @@
 # 联合安装 AimiliVPN 时，出站为 127.0.0.1:8500。账号读 /opt/aimilivpn/vpngate_data/proxy_auth.json，没有就用 socks5 / ilovestudy。
 # 检测区
 # -------------------------------------------------------------
-jiuheyi_version="V1.1.0"
+jiuheyi_version="V1.1.1"
 # 检查系统
 export LANG=en_US.UTF-8
 
@@ -10559,6 +10559,33 @@ jiuheyiPatchRoutingLoopback() {
     done
 }
 
+jiuheyiSingboxMemLimit() {
+    local kb
+    kb=$(awk '/^MemTotal:/{print $2}' /proc/meminfo 2>/dev/null)
+    if [[ -z "${kb}" || "${kb}" -lt 716800 ]]; then echo 160MiB
+    elif [[ "${kb}" -lt 1572864 ]]; then echo 320MiB
+    else echo 512MiB; fi
+}
+
+# V1.1.1：长 RTT（国内到海外 150-200ms）加丢包时的网络参数，两个内核都用：
+# QUIC（Hysteria2 / TUIC）的 UDP 缓冲默认只有 208K，quic-go 要 7M，否则窗口上不去；
+# 长连接空闲后不再从慢启动开始（复用的代理连接上网页首包快）；发送队列不堆积（多个流共用一条连接时首包快）。
+jiuheyiNetTune() {
+    [[ "${JIUHEYI_NET_TUNE:-1}" == "1" ]] || return 0
+    mkdir -p /etc/sysctl.d
+    cat >/etc/sysctl.d/98-jiuheyi-net.conf <<'EOF'
+net.core.rmem_max = 16777216
+net.core.wmem_max = 16777216
+net.ipv4.tcp_rmem = 4096 131072 16777216
+net.ipv4.tcp_wmem = 4096 65536 16777216
+net.ipv4.tcp_slow_start_after_idle = 0
+net.ipv4.tcp_notsent_lowat = 131072
+net.ipv4.tcp_mtu_probing = 1
+net.ipv4.tcp_fastopen = 3
+EOF
+    sysctl -p /etc/sysctl.d/98-jiuheyi-net.conf >/dev/null 2>&1 || true
+}
+
 # 内存：只留在用的内核。sing-box GOMEMLIMIT 120MiB，Xray MemoryMax 150M（小内存机器上防止一个内核吃光内存）。
 jiuheyiMemoryTune() {
     local changed=0 d
@@ -10572,13 +10599,18 @@ jiuheyiMemoryTune() {
     fi
     if [[ -f /etc/systemd/system/sing-box.service ]]; then
         d=/etc/systemd/system/sing-box.service.d
-        if [[ ! -f "${d}/10-jiuheyi-memory.conf" ]]; then
-            mkdir -p "${d}"
-            printf '[Service]\nEnvironment=GOMEMLIMIT=%s\n' "${JIUHEYI_SINGBOX_GOMEMLIMIT:-120MiB}" >"${d}/10-jiuheyi-memory.conf"
-            changed=1
+        # V1.1.1：120MiB 在 1G 机器上压力大时 GC 很频繁（单核时和加解密抢 CPU）。按内存给：<700M 160MiB，<1.5G 320MiB，更大 512MiB。
+        local want="${JIUHEYI_SINGBOX_GOMEMLIMIT:-$(jiuheyiSingboxMemLimit)}"
+        if [[ ! -f "${d}/10-jiuheyi-memory.conf" ]] || grep -qx 'Environment=GOMEMLIMIT=120MiB' "${d}/10-jiuheyi-memory.conf"; then
+            if ! grep -qx "Environment=GOMEMLIMIT=${want}" "${d}/10-jiuheyi-memory.conf" 2>/dev/null; then
+                mkdir -p "${d}"
+                printf '[Service]\nEnvironment=GOMEMLIMIT=%s\n' "${want}" >"${d}/10-jiuheyi-memory.conf"
+                changed=1
+            fi
         fi
     fi
     [[ "${changed}" == "1" ]] && systemctl daemon-reload >/dev/null 2>&1
+    jiuheyiNetTune
     # 没有任何入站配置的内核不需要跑（例如 sing-box 接管后残留的 xray）。
     if systemctl is-active --quiet xray 2>/dev/null && ! ls /etc/v2ray-agent/xray/conf/*inbounds*.json >/dev/null 2>&1; then
         systemctl stop xray >/dev/null 2>&1; systemctl disable xray >/dev/null 2>&1
