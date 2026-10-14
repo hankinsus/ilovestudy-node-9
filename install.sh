@@ -10453,7 +10453,7 @@ menu() {
     echoContent yellow "9.证书管理"
     echoContent yellow "10.CDN节点管理"
     echoContent yellow "11.分流工具"
-    echoContent yellow "19.DNS模式"
+    echoContent yellow "20.DNS模式"
     echoContent yellow "12.添加新端口"
     echoContent yellow "13.BT下载管理"
     echoContent yellow "15.域名黑名单"
@@ -10461,6 +10461,7 @@ menu() {
     echoContent yellow "16.core管理"
     echoContent yellow "17.安装BBR、DD脚本"
     echoContent yellow "18.更新脚本和内核"
+    echoContent yellow "19.安装 AimiliVPN（8443 管理，8500 出口，默认全局分流）"
     echoContent skyBlue "-------------------------脚本管理-----------------------------"
     echoContent yellow "30.卸载脚本"
     echoContent red "=============================================================="
@@ -10505,6 +10506,9 @@ menu() {
         routingToolsMenu 1
         ;;
     19)
+        jiuheyiInstallAimili
+        ;;
+    20)
         jiuheyiDnsMenu
         ;;
     12)
@@ -11050,6 +11054,51 @@ EOF
 
 jiuheyiTuneXray() {
     jiuheyiApplyDnsMode
+}
+
+# 菜单 19：九合一装好之后再装 AimiliVPN。有域名沿用九合一的域名，没有就问（回车跳过=无域名，IP 自签证书）。
+# 装完默认全局分流：sing-box/xray 出口改为 127.0.0.1:8500（socks5 / ilovestudy，AimiliVPN 面板改过账号以面板为准）。
+jiuheyiInstallAimili() {
+    if [[ -f /opt/aimilivpn/vpngate_data/state.json && "${AIMILI_ALLOW_EXISTING:-}" != "1" ]]; then
+        echoContent yellow " ---> AimiliVPN 已安装（/opt/aimilivpn）。更新请用 ml 菜单，重装请先 ml uninstall。"
+        return 0
+    fi
+    local aimiliDomain="${AIMILIVPN_DOMAIN:-}"
+    if [[ -z "${aimiliDomain}" ]]; then
+        readInstallType >/dev/null 2>&1 || true
+        readConfigHostPathUUID >/dev/null 2>&1 || true
+        if [[ -n "${currentHost}" && "${currentHost}" != "null" ]] && ! echo "${currentHost}" | grep -qE '^[0-9.]+$'; then
+            aimiliDomain="${currentHost}"
+            echoContent green " ---> 沿用九合一域名：${aimiliDomain}"
+        elif [[ -t 0 ]]; then
+            read -r -p "九合一没有域名。请输入 AimiliVPN 域名，直接回车跳过（用 IP 自签证书）: " aimiliDomain
+        fi
+    fi
+    aimiliDomain="$(printf '%s' "${aimiliDomain}" | tr -d '[:space:]')"
+    local aimili_url="${AIMILI_INSTALL_URL:-https://raw.githubusercontent.com/hankinsus/aimili-vpngate-production/main/install.sh}"
+    if [[ -n "${AIMILI_INSTALL_FILE:-}" && -f "${AIMILI_INSTALL_FILE}" ]]; then
+        cp -f "${AIMILI_INSTALL_FILE}" /tmp/aimili-install.sh
+    elif ! curl -fsSL "${aimili_url}" -o /tmp/aimili-install.sh; then
+        echoContent red " ---> 下载 AimiliVPN 安装脚本失败：${aimili_url}"
+        return 1
+    fi
+    echoContent yellow " ---> 开始安装 AimiliVPN（域名：${aimiliDomain:-无，IP 自签}）"
+    if ! (cd /tmp && AIMILI_FROM_JIUHEYI=1 AIMILI_ACTION=install AIMILIVPN_DOMAIN="${aimiliDomain}" INSTALL_JIUHEYI=n \
+        bash /tmp/aimili-install.sh ${AIMILI_INSTALL_ARGS:-}); then
+        echoContent red " ---> AimiliVPN 安装失败，九合一出口保持不变"
+        return 1
+    fi
+    export JIUHEYI_EGRESS=aimili
+    jiuheyiApplyDnsMode global
+    if [[ -x /etc/v2ray-agent/sing-box/sing-box ]]; then
+        singBoxMergeConfig
+        systemctl restart sing-box >/dev/null 2>&1 || true
+    fi
+    if [[ -f /etc/v2ray-agent/xray/xray ]]; then
+        handleXray stop
+        handleXray start
+    fi
+    echoContent green " ---> AimiliVPN 已安装，九合一已改为全局分流：出口 127.0.0.1:8500（socks5）"
 }
 
 jiuheyiDnsMenu() {
@@ -11653,6 +11702,27 @@ jiuheyiOneClick() {
 
 
 cronFunction
+# AimiliVPN 安装/卸载时调用：JIUHEYI_SET_EGRESS=global 出口改为 8500；=direct 改回直连（卸载 AimiliVPN 后用）。
+if [[ "${JIUHEYI_SET_EGRESS:-}" == "global" || "${JIUHEYI_SET_EGRESS:-}" == "direct" ]]; then
+    readInstallType >/dev/null 2>&1 || true
+    if [[ "${JIUHEYI_SET_EGRESS}" == "global" ]]; then
+        export JIUHEYI_EGRESS=aimili
+    else
+        export JIUHEYI_EGRESS=
+        rm -f /etc/v2ray-agent/sing-box/conf/config/socks5_outbound.json
+    fi
+    jiuheyiApplyDnsMode "${JIUHEYI_SET_EGRESS}"
+    if [[ -x /etc/v2ray-agent/sing-box/sing-box ]]; then
+        singBoxMergeConfig
+        systemctl restart sing-box >/dev/null 2>&1 || true
+    fi
+    if [[ -x /etc/v2ray-agent/xray/xray ]]; then
+        handleXray stop >/dev/null 2>&1 || true
+        handleXray start >/dev/null 2>&1 || true
+    fi
+    echoContent green " ---> 九合一出口已改为 ${JIUHEYI_SET_EGRESS}"
+    exit 0
+fi
 if [[ "${JIUHEYI_REPAIR_ONLY:-}" == "1" ]]; then
     jiuheyiRepairAfterUpdate
     exit 0
