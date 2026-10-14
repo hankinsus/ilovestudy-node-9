@@ -6,7 +6,7 @@
 # 联合安装 AimiliVPN 时，出站为 127.0.0.1:8500。账号读 /opt/aimilivpn/vpngate_data/proxy_auth.json，没有就用 socks5 / ilovestudy。
 # 检测区
 # -------------------------------------------------------------
-jiuheyi_version="V1.0.9"
+jiuheyi_version="V1.1.0"
 # 检查系统
 export LANG=en_US.UTF-8
 
@@ -2379,7 +2379,7 @@ installSingBox() {
         if [[ "${prereleaseStatus}" == "true" ]]; then
             version=$(curl -s "https://api.github.com/repos/SagerNet/sing-box/releases?per_page=20" | jq -r ".[]|select (.prerelease==${prereleaseStatus})|.tag_name" | head -1)
         else
-            version=$(curl -s https://api.github.com/repos/SagerNet/sing-box/releases/latest | jq -r .tag_name)
+            version=$(jiuheyiLatestTag SagerNet/sing-box)
         fi
 
         echoContent green " ---> 最新版本:${version}"
@@ -2409,7 +2409,7 @@ installSingBox() {
         if [[ "${prereleaseStatus}" == "true" ]]; then
             version=$(curl -s "https://api.github.com/repos/SagerNet/sing-box/releases?per_page=20" | jq -r ".[]|select (.prerelease==${prereleaseStatus})|.tag_name" | head -1)
         else
-            version=$(curl -s https://api.github.com/repos/SagerNet/sing-box/releases/latest | jq -r .tag_name)
+            version=$(jiuheyiLatestTag SagerNet/sing-box)
         fi
 
         echoContent green " ---> 最新版本:${version}"
@@ -2447,7 +2447,7 @@ installXray() {
         if [[ "${prereleaseStatus}" == "true" ]]; then
             version=$(curl -s "https://api.github.com/repos/XTLS/Xray-core/releases?per_page=5" | jq -r ".[]|select (.prerelease==${prereleaseStatus})|.tag_name" | head -1)
         else
-            version=$(curl -s https://api.github.com/repos/XTLS/Xray-core/releases/latest | jq -r .tag_name)
+            version=$(jiuheyiLatestTag XTLS/Xray-core)
         fi
 
         echoContent green " ---> Xray-core版本:${version}"
@@ -2592,7 +2592,7 @@ updateXray() {
         if [[ "${prereleaseStatus}" == "true" ]]; then
             version=$(curl -s "https://api.github.com/repos/XTLS/Xray-core/releases?per_page=5" | jq -r ".[]|select (.prerelease==${prereleaseStatus})|.tag_name" | head -1)
         else
-            version=$(curl -s https://api.github.com/repos/XTLS/Xray-core/releases/latest | jq -r .tag_name)
+            version=$(jiuheyiLatestTag XTLS/Xray-core)
         fi
 
         if [[ -n "$1" ]]; then
@@ -2618,7 +2618,7 @@ updateXray() {
         if [[ "${prereleaseStatus}" == "true" ]]; then
             remoteVersion=$(curl -s "https://api.github.com/repos/XTLS/Xray-core/releases?per_page=5" | jq -r ".[]|select (.prerelease==${prereleaseStatus})|.tag_name" | head -1)
         else
-            remoteVersion=$(curl -s https://api.github.com/repos/XTLS/Xray-core/releases/latest | jq -r .tag_name)
+            remoteVersion=$(jiuheyiLatestTag XTLS/Xray-core)
         fi
 
         echoContent green " ---> 最新版本:${remoteVersion}"
@@ -8752,6 +8752,15 @@ customSingBoxInstall() {
 }
 
 # V1.0.9：本机装了 AimiliVPN 时，它的 8443 管理入口在 nginx 里。无域名 Reality 安装会停掉 nginx（且 handleNginx start 对只装 Reality 不启动），装完把 nginx 拉起来。
+# 取 GitHub 最新 release 标签：API 限流（返回 null）时改用 releases/latest 的跳转地址
+jiuheyiLatestTag() {
+    local repo="$1" tag=""
+    tag=$(curl -s --max-time 20 "https://api.github.com/repos/${repo}/releases/latest" | jq -r '.tag_name // empty' 2>/dev/null)
+    if [[ -z "${tag}" || "${tag}" == "null" ]]; then
+        tag=$(curl -sIL --max-time 20 -o /dev/null -w '%{url_effective}' "https://github.com/${repo}/releases/latest" | sed -n 's#.*/releases/tag/##p')
+    fi
+    echo "${tag}"
+}
 jiuheyiRestoreAimiliNginx() {
     [[ -f /etc/nginx/conf.d/aimilivpn-production.conf ]] || return 0
     command -v nginx >/dev/null 2>&1 || return 0
@@ -8763,6 +8772,8 @@ jiuheyiRestoreAimiliNginx() {
     sleep 1
     ss -ltn 2>/dev/null | grep -qE '[:.]8443[[:space:]]' || echoContent red " ---> AimiliVPN 8443 管理入口没有起来，请执行 nginx -t 查看"
 }
+# 安装中途退出（如核心下载失败）也要把 AimiliVPN 的 8443 拉回来
+trap 'jiuheyiRestoreAimiliNginx >/dev/null 2>&1 || true' EXIT
 # 一键无域名Xray-core Reality
 installXrayReality() {
     selectCustomInstallType=",7,"
