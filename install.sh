@@ -10402,28 +10402,6 @@ jiuheyiKnownDomain() {
     return 1
 }
 
-# 菜单 20。Aimili 已装则跳过。有域名直接装，没有就问，回车也安装。
-jiuheyiInstallAimili() {
-    if [[ -f /opt/aimilivpn/vpngate_data/state.json ]]; then
-        echoContent yellow "AimiliVPN 已经安装，跳过。"
-        return 0
-    fi
-    local use_domain=""
-    use_domain="$(jiuheyiKnownDomain || true)"
-    if [[ -n "${use_domain}" ]]; then
-        echoContent green "检测到域名 ${use_domain}，直接安装 AimiliVPN。"
-    elif [[ -t 0 ]]; then
-        read -r -p "请输入域名，直接回车安装: " use_domain
-        use_domain="$(printf '%s' "${use_domain}" | tr -d '[:space:]')"
-    fi
-    local aimili_url="${AIMILI_INSTALL_URL:-https://raw.githubusercontent.com/hankinsus/aimili-vpngate-production/main/install.sh}"
-    if ! curl -fsSL "${aimili_url}" -o /tmp/aimili-install.sh; then
-        echoContent red "AimiliVPN 安装脚本下载失败。"
-        return 1
-    fi
-    AIMILI_FROM_JIUHEYI=1 AIMILIVPN_DOMAIN="${use_domain}" bash /tmp/aimili-install.sh
-}
-
 menu() {
     cd "$HOME" || exit
     echoContent red "\n=============================================================="
