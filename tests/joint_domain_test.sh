@@ -16,4 +16,8 @@ res=$(bash -c "echoContent(){ shift; echo -e \"\$*\"; }; eval \"\$(sed -n '/^sho
 grep -q '"outboundTag": "socks5_outbound"' <<<"$res" || { echo "rule missing"; echo "$res"; exit 1; }
 grep -q '8500' <<<"$res"
 ! grep -q 'No such file' <<<"$res"
+# 订阅地址：currentHost 为空但订阅 server_name 是域名 -> 用域名，不写死 IP
+grep -q 'subHost="${subscribeDomain}"' $F
+# 18443 只复用同域名、非自签的 AimiliVPN 证书
+sed -n '/^jiuheyiInstallDefaultSubscribe() {/,/^}/p' $F | grep -q 'openssl verify -CAfile /etc/aimilivpn/tls/fullchain.pem'
 echo PASS

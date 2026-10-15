@@ -6,7 +6,7 @@
 # 联合安装 AimiliVPN 时，出站为 127.0.0.1:8500。账号读 /opt/aimilivpn/vpngate_data/proxy_auth.json，没有就用 socks5 / ilovestudy。
 # 检测区
 # -------------------------------------------------------------
-jiuheyi_version="V1.1.3"
+jiuheyi_version="V1.1.4"
 # 检查系统
 export LANG=en_US.UTF-8
 
@@ -9739,8 +9739,15 @@ subscribe() {
                     currentDomain="${currentHost}:${currentDefaultPort}"
                 fi
                 if [[ -n "${subscribePortLocal}" ]]; then
-                    if [[ "${subscribeType}" == "http" || -z "${currentHost}" ]]; then
+                    local subHost="${currentHost}"
+                    # 订阅 nginx 的 server_name 是域名时优先用它（Reality-only 等 currentHost 为空的情况），IP 只作备用
+                    if [[ -z "${subHost}" && -n "${subscribeDomain}" && "${subscribeDomain}" != "_" && ! "${subscribeDomain}" =~ ^[0-9.]+$ && "${subscribeDomain}" == *.* ]]; then
+                        subHost="${subscribeDomain}"
+                    fi
+                    if [[ "${subscribeType}" == "http" || -z "${subHost}" ]]; then
                         currentDomain="$(getPublicIP):${subscribePort}"
+                    elif [[ "${subHost}" != "${currentHost}" ]]; then
+                        currentDomain="${subHost}:${subscribePort}"
                     else
                         currentDomain="${currentHost}:${subscribePort}"
                     fi
@@ -11196,7 +11203,11 @@ jiuheyiInstallDefaultSubscribe() {
     mkdir -p "${nginxConfigPath}" /etc/v2ray-agent/tls /etc/v2ray-agent/subscribe/default /etc/v2ray-agent/subscribe/sing-box /usr/share/nginx/html
     local cert="/etc/v2ray-agent/tls/subscribe.crt"
     local key="/etc/v2ray-agent/tls/subscribe.key"
-    if [[ -n "${domain}" && -s "/etc/aimilivpn/tls/fullchain.pem" && -s "/etc/aimilivpn/tls/privkey.pem" ]]; then
+    # 有域名时 18443 用域名证书：AimiliVPN 证书须是同域名、未过期、非自签才复用，否则走 jiuheyiIssueDomainCert
+    if [[ -n "${domain}" && -s "/etc/aimilivpn/tls/fullchain.pem" && -s "/etc/aimilivpn/tls/privkey.pem" ]] &&
+        openssl x509 -in /etc/aimilivpn/tls/fullchain.pem -noout -checkend 0 >/dev/null 2>&1 &&
+        ! openssl verify -CAfile /etc/aimilivpn/tls/fullchain.pem /etc/aimilivpn/tls/fullchain.pem >/dev/null 2>&1 &&
+        openssl x509 -in /etc/aimilivpn/tls/fullchain.pem -noout -subject -ext subjectAltName 2>/dev/null | grep -Fqi "${domain}"; then
         cert="/etc/aimilivpn/tls/fullchain.pem"
         key="/etc/aimilivpn/tls/privkey.pem"
     elif [[ -n "${domain}" ]]; then
