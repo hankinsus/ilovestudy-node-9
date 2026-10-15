@@ -6,7 +6,7 @@
 # 联合安装 AimiliVPN 时，出站为 127.0.0.1:8500。账号读 /opt/aimilivpn/vpngate_data/proxy_auth.json，没有就用 socks5 / ilovestudy。
 # 检测区
 # -------------------------------------------------------------
-jiuheyi_version="V1.1.2"
+jiuheyi_version="V1.1.3"
 # 检查系统
 export LANG=en_US.UTF-8
 
@@ -161,8 +161,8 @@ initVar() {
     warpRegCoreCPUVendor=""
     cpuVendor=""
 
-    # 域名
-    domain=
+    # 域名。AimiliVPN 联合安装通过环境变量 domain / JIUHEYI_DOMAIN 传入，这里不能清空。
+    domain="${domain:-${JIUHEYI_DOMAIN:-}}"
     # 安装总进度
     totalProgress=1
 
@@ -7946,6 +7946,10 @@ showSingBoxRoutingRules() {
         if [[ -f "${singBoxConfigPath}$1.json" ]]; then
             jq .route.rules "${singBoxConfigPath}$1.json"
         elif [[ "$1" == "socks5_01_outbound_route" && -f "${singBoxConfigPath}socks5_outbound.json" ]]; then
+            # 联合安装是全局出站：route.final 指向 socks5_outbound
+            if [[ -f /etc/v2ray-agent/sing-box/conf/config.json ]]; then
+                echoContent yellow "route.final: $(jq -r '.route.final // "无"' /etc/v2ray-agent/sing-box/conf/config.json 2>/dev/null)"
+            fi
             echoContent yellow "已安装 sing-box socks5全局出站分流"
             echoContent yellow "\n出站分流配置："
             echoContent skyBlue "$(jq .outbounds[0] ${singBoxConfigPath}socks5_outbound.json)"
@@ -7960,17 +7964,25 @@ showSingBoxRoutingRules() {
 # xray内核分流规则
 showXrayRoutingRules() {
     if [[ "${coreInstallType}" == "1" ]]; then
-        if [[ -f "${configPath}09_routing.json" ]]; then
-            jq ".routing.rules[]|select(.outboundTag==\"$1\")" "${configPath}09_routing.json"
-
-            echoContent yellow "\n已安装 xray-core socks5全局出站分流"
-            echoContent yellow "\n出站分流配置："
-            echoContent skyBlue "$(jq .outbounds[0].settings.servers[0] ${configPath}socks5_outbound.json)"
-
-        elif [[ "$1" == "socks5_outbound" && -f "${configPath}socks5_outbound.json" ]]; then
-            echoContent yellow "\n已安装 xray-core socks5全局出站分流"
-            echoContent yellow "\n出站分流配置："
-            echoContent skyBlue "$(jq .outbounds[0].settings.servers[0] ${configPath}socks5_outbound.json)"
+        # 联合安装写 zz_socks5_outbound.json / zz_egress.json；菜单安装写 socks5_outbound.json / 09_routing.json。都认。
+        local out_file="" f found=0
+        for f in "${configPath}socks5_outbound.json" "${configPath}zz_socks5_outbound.json"; do
+            [[ -f "${f}" ]] && out_file="${f}" && break
+        done
+        for f in "${configPath}09_routing.json" "${configPath}zz_egress.json"; do
+            [[ -f "${f}" ]] || continue
+            if jq -e ".routing.rules[]?|select(.outboundTag==\"$1\")" "${f}" >/dev/null 2>&1; then
+                echoContent yellow "\n分流规则（$(basename "${f}")）："
+                jq ".routing.rules[]|select(.outboundTag==\"$1\")" "${f}"
+                found=1
+            fi
+        done
+        if [[ "$1" == "socks5_outbound" && -n "${out_file}" ]]; then
+            [[ "${found}" == "1" ]] && echoContent yellow "\n已安装 xray-core socks5全局出站分流"
+            echoContent yellow "\n出站分流配置（$(basename "${out_file}")）："
+            echoContent skyBlue "$(jq .outbounds[0].settings.servers[0] "${out_file}")"
+        elif [[ "${found}" != "1" ]]; then
+            echoContent yellow "\n没有 outboundTag=$1 的分流规则"
         fi
     fi
 }
@@ -11131,12 +11143,29 @@ jiuheyiIssueDomainCert() {
     if [[ -s "${cert}" && -s "${key}" ]] && ! openssl verify -CAfile "${cert}" "${cert}" >/dev/null 2>&1; then
         return 0
     fi
+    # 联合安装：AimiliVPN 先装并已申请好同一域名证书，直接复用（软链接，续期后自动跟上），不再申请、不碰 80。
+    local aimili_cert="/etc/aimilivpn/tls/fullchain.pem" aimili_key="/etc/aimilivpn/tls/privkey.pem"
+    if [[ -s "${aimili_cert}" && -s "${aimili_key}" ]] &&
+        openssl x509 -in "${aimili_cert}" -noout -checkend 0 >/dev/null 2>&1 &&
+        ! openssl verify -CAfile "${aimili_cert}" "${aimili_cert}" >/dev/null 2>&1 &&
+        openssl x509 -in "${aimili_cert}" -noout -subject -ext subjectAltName 2>/dev/null | grep -Fqi "${domain}"; then
+        ln -sfn "${aimili_cert}" "${cert}"
+        ln -sfn "${aimili_key}" "${key}"
+        echoContent green " ---> 复用 AimiliVPN 的 ${domain} 证书"
+        return 0
+    fi
     if [[ ! -x "$HOME/.acme.sh/acme.sh" ]]; then
         curl -fsSL https://get.acme.sh | sh -s email=admin@ilovestudycn.com >/etc/v2ray-agent/tls/acme.log 2>&1 || return 1
     fi
-    handleNginx stop || true
     local issue_status=0
-    "$HOME/.acme.sh/acme.sh" --issue -d "${domain}" --standalone --httpport 80 --server letsencrypt --keylength ec-256 >>/etc/v2ray-agent/tls/acme.log 2>&1 || issue_status=$?
+    if [[ -f /etc/nginx/conf.d/aimilivpn-acme.conf && -d /var/www/aimilivpn-acme ]] &&
+        ss -ltnH 2>/dev/null | awk '{print $4}' | grep -Eq '(^|:)80$'; then
+        # 80 已由 nginx 提供 ACME webroot：走 webroot，不停 nginx（8443 管理入口不断）
+        "$HOME/.acme.sh/acme.sh" --issue -d "${domain}" -w /var/www/aimilivpn-acme --server letsencrypt --keylength ec-256 >>/etc/v2ray-agent/tls/acme.log 2>&1 || issue_status=$?
+    else
+        handleNginx stop || true
+        "$HOME/.acme.sh/acme.sh" --issue -d "${domain}" --standalone --httpport 80 --server letsencrypt --keylength ec-256 >>/etc/v2ray-agent/tls/acme.log 2>&1 || issue_status=$?
+    fi
     if [[ "${issue_status}" -ne 0 && "${issue_status}" -ne 2 ]]; then
         handleNginx start || true
         return 1
@@ -11567,6 +11596,11 @@ jiuheyiOneClick() {
 
     if [[ "${realityServerName}" == "null" ]]; then
         realityServerName=""
+    fi
+    if [[ -z "${JIUHEYI_REALITY_DOMAIN:-}" && -z "${realityServerName}" ]] &&
+        [[ "${JIUHEYI_FROM_AIMILI:-}" == "1" || "${JIUHEYI_CAMOUFLAGE_AUTO:-}" == "1" || ! -t 0 ]]; then
+        # 联合安装已在 AimiliVPN 开头问过伪装域名（空=自动挑选），这里不再询问。
+        JIUHEYI_REALITY_DOMAIN="$(jiuheyiPickRealityDomain)"
     fi
     if [[ -z "${JIUHEYI_REALITY_DOMAIN:-}" && -z "${realityServerName}" && -t 0 ]]; then
         local camouflage_input=""
