@@ -6,7 +6,7 @@
 # 联合安装 AimiliVPN 时，出站为 127.0.0.1:8500。账号读 /opt/aimilivpn/vpngate_data/proxy_auth.json，没有就用 socks5 / ilovestudy。
 # 检测区
 # -------------------------------------------------------------
-jiuheyi_version="V1.1.4"
+jiuheyi_version="V1.1.5"
 # 检查系统
 export LANG=en_US.UTF-8
 
@@ -6116,6 +6116,7 @@ unInstall() {
     done
     systemctl is-active --quiet firewalld 2>/dev/null && firewall-cmd --reload >/dev/null 2>&1
 
+    rm -f /etc/cron.daily/jiuheyi-aimili-cert-reload /etc/periodic/daily/jiuheyi-aimili-cert-reload
     rm -rf /etc/v2ray-agent
     rm -rf ${nginxConfigPath}alone.conf
     rm -rf ${nginxConfigPath}checkPortOpen.conf >/dev/null 2>&1
@@ -11142,22 +11143,58 @@ jiuheyiOwnCert() {
     chmod 600 "${key}" || true
 }
 
+# 证书可复用：存在、未过期、非自签（subject != issuer）、SAN 含该域名（DNS:域名 或 DNS:*.上级域）。
+# 注意：不能用 openssl verify -CAfile 自身 判断自签，Let's Encrypt fullchain 会靠系统根证书验证通过。
+jiuheyiCertReusable() {
+    local c="$1" d="$2" subj iss san parent
+    [[ -n "${c}" && -n "${d}" && -s "${c}" ]] || return 1
+    openssl x509 -in "${c}" -noout -checkend 0 >/dev/null 2>&1 || return 1
+    subj=$(openssl x509 -in "${c}" -noout -subject -nameopt RFC2253 2>/dev/null) || return 1
+    iss=$(openssl x509 -in "${c}" -noout -issuer -nameopt RFC2253 2>/dev/null) || return 1
+    [[ -n "${subj#subject=}" && "${subj#subject=}" != "${iss#issuer=}" ]] || return 1
+    san=$(openssl x509 -in "${c}" -noout -ext subjectAltName 2>/dev/null | tr ',' '\n' | sed 's/^[[:space:]]*//' | tr 'A-Z' 'a-z')
+    d=$(tr 'A-Z' 'a-z' <<<"${d}")
+    parent="${d#*.}"
+    grep -Fxq "dns:${d}" <<<"${san}" || grep -Fxq "dns:*.${parent}" <<<"${san}"
+}
+
+# AimiliVPN 证书续期后让九合一 nginx（18443 等）重新加载：每天比对指纹，变了就 nginx -t && reload。
+jiuheyiInstallAimiliCertReloadHook() {
+    local f=/etc/cron.daily/jiuheyi-aimili-cert-reload
+    [[ -d /etc/cron.daily ]] || f=/etc/periodic/daily/jiuheyi-aimili-cert-reload
+    mkdir -p "$(dirname "${f}")" 2>/dev/null || return 0
+    cat >"${f}" <<'HOOK'
+#!/bin/sh
+# 九合一：AimiliVPN 证书续期后重载 nginx，使 18443 用上新证书
+c=/etc/aimilivpn/tls/fullchain.pem
+s=/etc/v2ray-agent/tls/.aimili_cert.sha256
+[ -s "$c" ] || exit 0
+n=$(openssl x509 -in "$c" -noout -fingerprint -sha256 2>/dev/null)
+[ -n "$n" ] || exit 0
+[ "$(cat "$s" 2>/dev/null)" = "$n" ] && exit 0
+if nginx -t >/dev/null 2>&1; then
+    (systemctl reload nginx || rc-service nginx reload || nginx -s reload) >/dev/null 2>&1
+fi
+echo "$n" >"$s"
+HOOK
+    chmod 755 "${f}" || true
+    openssl x509 -in /etc/aimilivpn/tls/fullchain.pem -noout -fingerprint -sha256 >/etc/v2ray-agent/tls/.aimili_cert.sha256 2>/dev/null || true
+}
+
 jiuheyiIssueDomainCert() {
     [[ -n "${domain}" ]] || return 1
     mkdir -p /etc/v2ray-agent/tls
     local cert="/etc/v2ray-agent/tls/${domain}.crt"
     local key="/etc/v2ray-agent/tls/${domain}.key"
-    if [[ -s "${cert}" && -s "${key}" ]] && ! openssl verify -CAfile "${cert}" "${cert}" >/dev/null 2>&1; then
+    if [[ -s "${key}" ]] && jiuheyiCertReusable "${cert}" "${domain}"; then
         return 0
     fi
     # 联合安装：AimiliVPN 先装并已申请好同一域名证书，直接复用（软链接，续期后自动跟上），不再申请、不碰 80。
     local aimili_cert="/etc/aimilivpn/tls/fullchain.pem" aimili_key="/etc/aimilivpn/tls/privkey.pem"
-    if [[ -s "${aimili_cert}" && -s "${aimili_key}" ]] &&
-        openssl x509 -in "${aimili_cert}" -noout -checkend 0 >/dev/null 2>&1 &&
-        ! openssl verify -CAfile "${aimili_cert}" "${aimili_cert}" >/dev/null 2>&1 &&
-        openssl x509 -in "${aimili_cert}" -noout -subject -ext subjectAltName 2>/dev/null | grep -Fqi "${domain}"; then
+    if [[ -s "${aimili_key}" ]] && jiuheyiCertReusable "${aimili_cert}" "${domain}"; then
         ln -sfn "${aimili_cert}" "${cert}"
         ln -sfn "${aimili_key}" "${key}"
+        jiuheyiInstallAimiliCertReloadHook
         echoContent green " ---> 复用 AimiliVPN 的 ${domain} 证书"
         return 0
     fi
@@ -11204,12 +11241,12 @@ jiuheyiInstallDefaultSubscribe() {
     local cert="/etc/v2ray-agent/tls/subscribe.crt"
     local key="/etc/v2ray-agent/tls/subscribe.key"
     # 有域名时 18443 用域名证书：AimiliVPN 证书须是同域名、未过期、非自签才复用，否则走 jiuheyiIssueDomainCert
-    if [[ -n "${domain}" && -s "/etc/aimilivpn/tls/fullchain.pem" && -s "/etc/aimilivpn/tls/privkey.pem" ]] &&
-        openssl x509 -in /etc/aimilivpn/tls/fullchain.pem -noout -checkend 0 >/dev/null 2>&1 &&
-        ! openssl verify -CAfile /etc/aimilivpn/tls/fullchain.pem /etc/aimilivpn/tls/fullchain.pem >/dev/null 2>&1 &&
-        openssl x509 -in /etc/aimilivpn/tls/fullchain.pem -noout -subject -ext subjectAltName 2>/dev/null | grep -Fqi "${domain}"; then
+    if [[ -n "${domain}" && -s "/etc/aimilivpn/tls/privkey.pem" ]] &&
+        jiuheyiCertReusable /etc/aimilivpn/tls/fullchain.pem "${domain}"; then
         cert="/etc/aimilivpn/tls/fullchain.pem"
         key="/etc/aimilivpn/tls/privkey.pem"
+        echoContent green " ---> 18443 复用 AimiliVPN 的 ${domain} 证书"
+        jiuheyiInstallAimiliCertReloadHook
     elif [[ -n "${domain}" ]]; then
         jiuheyiIssueDomainCert || true
         if [[ -s "/etc/v2ray-agent/tls/${domain}.crt" && -s "/etc/v2ray-agent/tls/${domain}.key" ]]; then
