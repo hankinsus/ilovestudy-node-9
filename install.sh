@@ -10779,6 +10779,11 @@ jiuheyiRepairAfterUpdate() {
         [[ -n "${tmp3}" ]] && printf '%s\n' "${tmp3}" >/etc/v2ray-agent/sing-box/conf/config/06_hysteria2_inbounds.json
     fi
     [[ "${cores}" == *sing-box* ]] && { jiuheyiSingboxPortConflicts || ok=0; }
+    # V1.1.7：更新后立即检查域名证书，自签/借用/失效就再申请（失败则借 AimiliVPN 同域名正式证书）
+    if ls /etc/v2ray-agent/tls/*.crt >/dev/null 2>&1; then
+        jiuheyiAcmeHomeMigrate || true
+        jiuheyiCertSelfHeal || true
+    fi
     jiuheyiMemoryTune >/dev/null
     for core in ${cores}; do
         jiuheyiCoreErr=""
