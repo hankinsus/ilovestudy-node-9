@@ -1716,19 +1716,58 @@ EOF
     handleNginx stop
 }
 # singbox Nginx config
+# 本机有 IPv6 协议栈（没被内核关掉）时返回 0。域名有 AAAA 时客户端可能优先走 IPv6，
+# nginx 只听 IPv4 会被拒绝连接（VMess HTTPUpgrade、订阅 18443 不通，其它由内核直接监听 :: 的协议正常）。
+jiuheyiHasIPv6() {
+    [[ -n "${JIUHEYI_FORCE_IPV6:-}" ]] && { [[ "${JIUHEYI_FORCE_IPV6}" == "1" ]]; return; }
+    [[ -f /proc/net/if_inet6 ]] || return 1
+    [[ "$(cat /proc/sys/net/ipv6/conf/all/disable_ipv6 2>/dev/null || echo 0)" != "1" ]]
+}
+# jiuheyiNginxListenV6 <端口> [参数]：有 IPv6 时输出 "listen [::]:<端口> <参数>;"，否则空
+jiuheyiNginxListenV6() {
+    jiuheyiHasIPv6 || return 0
+    echo "listen [::]:${1}${2:+ ${2}};"
+}
+# 已装机器：给 nginx 里只听 IPv4 的对外端口补上 [::]（VMess HTTPUpgrade、订阅），nginx -t 不过就还原
+jiuheyiNginxIPv6Repair() {
+    jiuheyiHasIPv6 || return 0
+    command -v nginx >/dev/null 2>&1 || return 0
+    local f changed=() port bak
+    for f in "${nginxConfigPath:-/etc/nginx/conf.d/}sing_box_VMess_HTTPUpgrade.conf" "${nginxConfigPath:-/etc/nginx/conf.d/}subscribe.conf"; do
+        [[ -f "${f}" ]] || continue
+        port=$(grep -m1 -oE '^[[:space:]]*listen[[:space:]]+[0-9]+' "${f}" | grep -oE '[0-9]+$')
+        [[ -n "${port}" ]] || continue
+        grep -qE "listen[[:space:]]+\[::\]:${port}([^0-9]|$)" "${f}" && continue
+        bak="${f}.bak-ipv6"
+        cp -a "${f}" "${bak}"
+        sed -i -E "0,/^([[:space:]]*)listen[[:space:]]+${port}[[:space:]]+([^;]*);/s//\1listen ${port} \2;listen [::]:${port} \2;/" "${f}"
+        changed+=("${f}")
+    done
+    [[ ${#changed[@]} -gt 0 ]] || return 0
+    if nginx -t >/dev/null 2>&1; then
+        systemctl reload nginx >/dev/null 2>&1 || nginx -s reload >/dev/null 2>&1 || true
+        echoContent green " ---> nginx 已补 IPv6 监听：${changed[*]##*/}"
+    else
+        for f in "${changed[@]}"; do mv -f "${f}.bak-ipv6" "${f}"; done
+        echoContent yellow " ---> nginx 补 IPv6 监听后检查不过，已还原"
+        return 0
+    fi
+    for f in "${changed[@]}"; do rm -f "${f}.bak-ipv6"; done
+}
+
 singBoxNginxConfig() {
     local type=$1
     local port=$2
 
     local nginxH2Conf=
-    nginxH2Conf="listen ${port} http2 so_keepalive=on ssl;"
+    nginxH2Conf="listen ${port} http2 so_keepalive=on ssl;$(jiuheyiNginxListenV6 "${port}" "http2 so_keepalive=on ssl")"
     nginxVersion=$(nginx -v 2>&1)
 
     local singBoxNginxSSL=
     singBoxNginxSSL="ssl_certificate /etc/v2ray-agent/tls/${domain}.crt;ssl_certificate_key /etc/v2ray-agent/tls/${domain}.key;"
 
     if echo "${nginxVersion}" | grep -q "1.25" && [[ $(echo "${nginxVersion}" | awk -F "[.]" '{print $3}') -gt 0 ]] || [[ $(echo "${nginxVersion}" | awk -F "[.]" '{print $2}') -gt 25 ]]; then
-        nginxH2Conf="listen ${port} so_keepalive=on ssl;http2 on;"
+        nginxH2Conf="listen ${port} so_keepalive=on ssl;$(jiuheyiNginxListenV6 "${port}" "so_keepalive=on ssl")http2 on;"
     fi
 
     if echo "${selectCustomInstallType}" | grep -q ",11," || [[ "$1" == "all" ]]; then
@@ -10728,6 +10767,8 @@ jiuheyiRepairAfterUpdate() {
         [[ -n "${tmp3}" ]] && printf '%s\n' "${tmp3}" >/etc/v2ray-agent/sing-box/conf/config/06_hysteria2_inbounds.json
     fi
     [[ "${cores}" == *sing-box* ]] && { jiuheyiSingboxPortConflicts || ok=0; }
+    # nginx 对外端口补 IPv6 监听（域名有 AAAA 时 VMess HTTPUpgrade / 订阅走 IPv6 被拒）
+    jiuheyiNginxIPv6Repair || true
     jiuheyiMemoryTune >/dev/null
     for core in ${cores}; do
         jiuheyiCoreErr=""
@@ -11230,6 +11271,7 @@ jiuheyiInstallDefaultSubscribe() {
     cat >"${nginxConfigPath}subscribe.conf" <<EOF
 server {
     listen ${port} ssl;
+    $(jiuheyiNginxListenV6 "${port}" ssl)
     server_name ${server_name};
     ssl_certificate ${cert};
     ssl_certificate_key ${key};
