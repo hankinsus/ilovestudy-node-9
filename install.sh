@@ -6,7 +6,7 @@
 # 联合安装 AimiliVPN 时，出站为 127.0.0.1:8500。账号读 /opt/aimilivpn/vpngate_data/proxy_auth.json，没有就用 socks5 / ilovestudy。
 # 检测区
 # -------------------------------------------------------------
-jiuheyi_version="V1.1.6"
+jiuheyi_version="V1.1.7"
 # 检查系统
 export LANG=en_US.UTF-8
 
@@ -2022,10 +2022,15 @@ installTLS() {
     if [[ "${JIUHEYI_ONECLICK:-}" == "1" || "${AIMILI_SUITE:-}" == "1" ]]; then
         echoContent skyBlue "\n进度  $1/${totalProgress} : 申请域名证书"
         if jiuheyiIssueDomainCert; then
+            rm -f "/etc/v2ray-agent/tls/${domain}.borrowed"
             echoContent green " ---> 域名证书申请成功"
+        elif jiuheyiBorrowAimiliCert "${domain}"; then
+            echoContent yellow " ---> 域名证书申请失败（$(grep -o 'too many certificates[^,]*\|rateLimited' /etc/v2ray-agent/tls/acme.log 2>/dev/null | tail -1)），已暂用 AimiliVPN 同域名正式证书；每天自动再申请自己的"
         else
+            # 申请失败留下的旧自签不再沿用前一次的；没有可用正式证书才自签
+            rm -f "/etc/v2ray-agent/tls/${domain}.crt" "/etc/v2ray-agent/tls/${domain}.key"
             jiuheyiOwnCert "${domain}"
-            echoContent red " ---> 域名证书申请失败，已改用本机证书"
+            echoContent red " ---> 域名证书申请失败，已改用本机自签证书（订阅客户端会提示证书不受信任），每天自动再申请。原因见 /etc/v2ray-agent/tls/acme.log"
         fi
         return 0
     fi
@@ -2309,8 +2314,10 @@ renewalTLS() {
         echoContent skyBlue "\n进度  $1/1 : 更新证书"
     fi
     # V1.1.6：联合/一键安装的证书在九合一自己的 acme 目录，只续自己的，不动 ~/.acme.sh 里 AimiliVPN 的条目
-    if ls "${JIUHEYI_ACME_HOME}"/*/*.conf >/dev/null 2>&1; then
+    if [[ -d "${JIUHEYI_ACME_HOME}" || -d "${JIUHEYI_ACME_OLD_HOME}" ]]; then
+        jiuheyiAcmeHomeMigrate
         jiuheyiRenewOwnCerts
+        jiuheyiCertSelfHeal
         return 0
     fi
     readAcmeTLS
@@ -6121,6 +6128,8 @@ unInstall() {
     done
     systemctl is-active --quiet firewalld 2>/dev/null && firewall-cmd --reload >/dev/null 2>&1
 
+    # V1.1.7：acme 证书目录 /var/lib/jiuheyi-acme 保留，重装同一域名直接用，不重新签发（省 Let's Encrypt 额度）
+    jiuheyiAcmeHomeMigrate 2>/dev/null || true
     rm -rf /etc/v2ray-agent
     rm -rf ${nginxConfigPath}alone.conf
     rm -rf ${nginxConfigPath}checkPortOpen.conf >/dev/null 2>&1
@@ -11150,14 +11159,30 @@ jiuheyiOwnCert() {
 # V1.1.6：九合一与 AimiliVPN 证书各自申请、各自续期，互不复用。
 # 九合一的 acme 证书放自己的目录（--cert-home /etc/v2ray-agent/tls/acme），与 AimiliVPN 在 ~/.acme.sh 里的同域名条目分开，
 # 卸载任一方都不会删到另一方。80 已由 nginx 提供 AimiliVPN 的 ACME webroot 时走 webroot（不停 nginx），否则 standalone。
-JIUHEYI_ACME_HOME=/etc/v2ray-agent/tls/acme
-jiuheyiOwnCertValid() {  # 自己的证书：存在、剩余 14 天以上、非自签、SAN 含域名
+# V1.1.7：acme 目录移到 /var/lib/jiuheyi-acme，卸载九合一时保留（原来在 /etc/v2ray-agent/tls/acme，卸载被删，
+# 每次重装都重新签发，同一域名 7 天 5 张的 Let's Encrypt 额度用完后 18443 只能退成自签，订阅客户端报证书错误）。
+JIUHEYI_ACME_HOME=/var/lib/jiuheyi-acme
+JIUHEYI_ACME_OLD_HOME=/etc/v2ray-agent/tls/acme
+jiuheyiAcmeHomeMigrate() {
+    mkdir -p "${JIUHEYI_ACME_HOME}"
+    if [[ -d "${JIUHEYI_ACME_OLD_HOME}" && ! -L "${JIUHEYI_ACME_OLD_HOME}" ]] && ls "${JIUHEYI_ACME_OLD_HOME}"/*_ecc >/dev/null 2>&1; then
+        local d
+        for d in "${JIUHEYI_ACME_OLD_HOME}"/*_ecc; do
+            [[ -e "${JIUHEYI_ACME_HOME}/${d##*/}" ]] || cp -a "${d}" "${JIUHEYI_ACME_HOME}/" 2>/dev/null || true
+        done
+    fi
+}
+jiuheyiOwnCertValid() {  # 证书：存在、剩余 14 天以上、非自签、非测试 CA（staging）、SAN 含域名
     local c="$1" d="$2" subj iss
     [[ -s "${c}" && -n "${d}" ]] || return 1
     openssl x509 -in "${c}" -noout -checkend 1209600 >/dev/null 2>&1 || return 1
     subj=$(openssl x509 -in "${c}" -noout -subject -nameopt RFC2253 2>/dev/null | sed 's/^subject=//')
     iss=$(openssl x509 -in "${c}" -noout -issuer -nameopt RFC2253 2>/dev/null | sed 's/^issuer=//')
     [[ -n "${subj}" && "${subj}" != "${iss}" ]] || return 1
+    # Let's Encrypt staging（「(STAGING)」）、Fake/Pebble 测试 CA 客户端不信任；测试时设 JIUHEYI_ALLOW_STAGING_CERT=1 放行
+    if [[ "${JIUHEYI_ALLOW_STAGING_CERT:-}" != "1" ]] && grep -Eqi 'STAGING|Fake LE|Pebble|\(TEST\)' <<<"${iss}"; then
+        return 1
+    fi
     openssl x509 -in "${c}" -noout -ext subjectAltName 2>/dev/null | tr ',' '\n' | sed 's/^[[:space:]]*//' | grep -Fxqi "DNS:${d}"
 }
 jiuheyiAcmeWebroot() {  # 有 AimiliVPN 的 nginx ACME webroot 且 80 在听就用它，否则空（standalone）
@@ -11166,14 +11191,66 @@ jiuheyiAcmeWebroot() {  # 有 AimiliVPN 的 nginx ACME webroot 且 80 在听就�
         echo /var/www/aimilivpn-acme
     fi
 }
+jiuheyiKeyMatches() {  # 私钥与证书公钥一致
+    local c="$1" k="$2" a b
+    [[ -s "${c}" && -s "${k}" ]] || return 1
+    a=$(openssl x509 -in "${c}" -noout -pubkey 2>/dev/null | openssl md5 2>/dev/null)
+    b=$(openssl pkey -in "${k}" -pubout 2>/dev/null | openssl md5 2>/dev/null)
+    [[ -n "${a}" && "${a}" == "${b}" ]]
+}
+# V1.1.7：自己申请失败（如额度用完 429、80 不通）时，若本机 AimiliVPN 有同一域名的有效正式证书，复制一份给 18443/443 用
+# （复制不是软链接，卸载 AimiliVPN 不影响），并记 .borrowed；每天 RenewTLS 会再申请自己的证书，成功即替换。
+jiuheyiBorrowAimiliCert() {
+    local d="${1:-${domain}}" c k pair
+    [[ -n "${d}" ]] || return 1
+    for pair in "/var/lib/aimilivpn-acme/${d}_ecc/fullchain.cer|/var/lib/aimilivpn-acme/${d}_ecc/${d}.key" "/etc/aimilivpn/tls/fullchain.pem|/etc/aimilivpn/tls/privkey.pem"; do
+        c="${pair%%|*}"; k="${pair##*|}"
+        jiuheyiOwnCertValid "${c}" "${d}" || continue
+        jiuheyiKeyMatches "${c}" "${k}" || continue
+        mkdir -p /etc/v2ray-agent/tls
+        rm -f "/etc/v2ray-agent/tls/${d}.crt" "/etc/v2ray-agent/tls/${d}.key"
+        cp -f "${c}" "/etc/v2ray-agent/tls/${d}.crt" && cp -f "${k}" "/etc/v2ray-agent/tls/${d}.key" || return 1
+        chmod 600 "/etc/v2ray-agent/tls/${d}.key" || true
+        echo "${c}" >"/etc/v2ray-agent/tls/${d}.borrowed"
+        return 0
+    done
+    return 1
+}
+jiuheyiCertReload() {
+    nginx -t >/dev/null 2>&1 && (systemctl reload nginx || nginx -s reload) >/dev/null 2>&1
+    systemctl try-restart xray sing-box >/dev/null 2>&1 || true
+}
+# 每天 RenewTLS：域名证书是自签/借用/失效时再申请自己的（每 12 小时最多一次，省额度）；仍失败而 AimiliVPN 有更好的就再借。
+jiuheyiCertSelfHeal() {
+    local d c stamp now last
+    for c in /etc/v2ray-agent/tls/*.crt; do
+        [[ -f "${c}" ]] || continue
+        d="${c##*/}"; d="${d%.crt}"
+        [[ "${d}" =~ ^[0-9.]+$ || "${d}" != *.* ]] && continue
+        if jiuheyiOwnCertValid "${c}" "${d}" && [[ ! -f "/etc/v2ray-agent/tls/${d}.borrowed" ]]; then
+            continue
+        fi
+        stamp="/etc/v2ray-agent/tls/${d}.retry"; now=$(date +%s); last=$(cat "${stamp}" 2>/dev/null || echo 0)
+        [[ $((now - last)) -lt 43200 ]] && continue
+        echo "${now}" >"${stamp}"
+        if domain="${d}" jiuheyiIssueDomainCert; then
+            rm -f "/etc/v2ray-agent/tls/${d}.borrowed"
+            echoContent green " ---> ${d} 已换成九合一自己的正式证书"
+        elif ! jiuheyiOwnCertValid "${c}" "${d}" && jiuheyiBorrowAimiliCert "${d}"; then
+            echoContent yellow " ---> ${d} 申请仍失败，暂用 AimiliVPN 同域名正式证书"
+        fi
+        jiuheyiCertReload
+    done
+}
 jiuheyiIssueDomainCert() {
     [[ -n "${domain}" ]] || return 1
-    mkdir -p /etc/v2ray-agent/tls "${JIUHEYI_ACME_HOME}"
+    mkdir -p /etc/v2ray-agent/tls
+    jiuheyiAcmeHomeMigrate
     local cert="/etc/v2ray-agent/tls/${domain}.crt"
     local key="/etc/v2ray-agent/tls/${domain}.key"
     [[ -L "${cert}" ]] && rm -f "${cert}"
     [[ -L "${key}" ]] && rm -f "${key}"
-    if [[ -s "${key}" ]] && jiuheyiOwnCertValid "${cert}" "${domain}"; then
+    if [[ -s "${key}" ]] && jiuheyiOwnCertValid "${cert}" "${domain}" && [[ ! -f "/etc/v2ray-agent/tls/${domain}.borrowed" ]]; then
         return 0
     fi
     if [[ ! -x "$HOME/.acme.sh/acme.sh" ]]; then
@@ -11210,6 +11287,7 @@ jiuheyiRenewOwnCerts() {
     for conf in "${JIUHEYI_ACME_HOME}"/*/*.conf; do
         [[ -f "${conf}" ]] || continue
         d=$(sed -n "s/^Le_Domain='\(.*\)'$/\1/p" "${conf}"); [[ -n "${d}" ]] || continue
+        [[ -s "${conf%/*}/fullchain.cer" ]] || continue   # 从没签成功（只剩失败订单）的不续，交给 jiuheyiCertSelfHeal
         next=$(sed -n "s/^Le_NextRenewTime='\([0-9]*\)'$/\1/p" "${conf}")
         echoContent skyBlue " ---> ${d} 下次续期：$(sed -n "s/^Le_NextRenewTimeStr='\(.*\)'$/\1/p" "${conf}")"
         [[ -n "${next}" && "${now}" -lt "${next}" ]] && continue
