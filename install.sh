@@ -6,7 +6,7 @@
 # 联合安装 AimiliVPN 时，出站为 127.0.0.1:8500。账号读 /opt/aimilivpn/vpngate_data/proxy_auth.json，没有就用 socks5 / ilovestudy。
 # 检测区
 # -------------------------------------------------------------
-jiuheyi_version="V1.1.8"
+jiuheyi_version="V1.1.9"
 # 检查系统
 export LANG=en_US.UTF-8
 
@@ -394,7 +394,7 @@ readNginxSubscribe() {
     subscribeType="https"
     if [[ -f "${nginxConfigPath}subscribe.conf" ]]; then
         if grep -q "sing-box" "${nginxConfigPath}subscribe.conf"; then
-            subscribePort=$(grep "listen" "${nginxConfigPath}subscribe.conf" | awk '{print $2}')
+            subscribePort=$(jiuheyiNginxListenPort "${nginxConfigPath}subscribe.conf")
             subscribeDomain=$(grep "server_name" "${nginxConfigPath}subscribe.conf" | awk '{print $2}')
             subscribeDomain=${subscribeDomain//;/}
             if [[ -n "${currentHost}" && "${subscribeDomain}" != "${currentHost}" ]]; then
@@ -611,7 +611,7 @@ readInstallProtocolType() {
             currentInstallProtocolType="${currentInstallProtocolType}11,"
             if [[ "${coreInstallType}" == "2" ]]; then
                 frontingType=11_VMess_HTTPUpgrade_inbounds
-                singBoxVMessHTTPUpgradePort=$(grep 'listen' <${nginxConfigPath}sing_box_VMess_HTTPUpgrade.conf | awk '{print $2}')
+                singBoxVMessHTTPUpgradePort=$(jiuheyiNginxListenPort "${nginxConfigPath}sing_box_VMess_HTTPUpgrade.conf")
             fi
         fi
         if echo "${row}" | grep -q socks5_inbounds; then
@@ -1727,6 +1727,15 @@ jiuheyiHasIPv6() {
 jiuheyiNginxListenV6() {
     jiuheyiHasIPv6 || return 0
     echo "listen [::]:${1}${2:+ ${2}};"
+}
+# 订阅和分享链接只用数字端口。两行 listen（18443 与 [::]:18443）不能拼在一起。
+jiuheyiNginxListenPort() {
+    local file=$1 line port
+    [[ -f "${file}" ]] || return 0
+    line=$(grep -E '^[[:space:]]*listen[[:space:]]+[0-9]+' "${file}" | head -1 || true)
+    [[ -n "${line}" ]] || return 0
+    port=$(awk '{print $2}' <<<"${line}")
+    printf '%s' "${port%%;*}"
 }
 # 已装机器：给 nginx 里只听 IPv4 的对外端口补上 [::]（VMess HTTPUpgrade、订阅），nginx -t 不过就还原
 jiuheyiNginxIPv6Repair() {

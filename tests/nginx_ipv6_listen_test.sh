@@ -6,7 +6,7 @@ script="$root/install.sh"
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 fn() { sed -n "/^$1() {/,/^}/p" "$script"; }
-{ echo 'echoContent() { shift; echo "$*"; }'; fn jiuheyiHasIPv6; fn jiuheyiNginxListenV6; fn jiuheyiNginxIPv6Repair; } >"$work/lib.sh"
+{ echo 'echoContent() { shift; echo "$*"; }'; fn jiuheyiHasIPv6; fn jiuheyiNginxListenV6; fn jiuheyiNginxListenPort; fn jiuheyiNginxIPv6Repair; fn readNginxSubscribe; } >"$work/lib.sh"
 # shellcheck disable=SC1091
 . "$work/lib.sh"
 
@@ -46,5 +46,16 @@ diff -r "$work/once" "$work/conf" >/dev/null
 cp -a "$work/orig/." "$work/conf/"
 JIUHEYI_FORCE_IPV6=0 jiuheyiNginxIPv6Repair >/dev/null
 diff -r "$work/orig" "$work/conf" >/dev/null
+
+# 订阅链接只取数字端口。新装是两行 listen，更新补上的是同一行。
+printf 'server {\n    listen 18443 ssl;\n    listen [::]:18443 ssl;\n    server_name jpai.ilovestudy.ggff.net;\n    location ~ ^/s/(clashMeta|default|sing-box)/(.*) {}\n}\n' >"$work/conf/subscribe.conf"
+[[ "$(jiuheyiNginxListenPort "$work/conf/subscribe.conf")" == "18443" ]]
+nginxConfigPath="$work/conf/" currentHost="" readNginxSubscribe
+[[ "${subscribePort}" == "18443" ]]
+[[ "${subscribeType}" == "https" ]]
+url="https://jpai.ilovestudy.ggff.net:${subscribePort}/s/default/bb9252751f2aee5ebbdebe75e1877b09"
+[[ "${url}" == "https://jpai.ilovestudy.ggff.net:18443/s/default/bb9252751f2aee5ebbdebe75e1877b09" ]]
+printf 'server {\n    listen 18443 ssl;listen [::]:18443 ssl;\n    server_name jpai.ilovestudy.ggff.net;\n    location /s/sing-box/ {}\n}\n' >"$work/conf/subscribe.conf"
+[[ "$(jiuheyiNginxListenPort "$work/conf/subscribe.conf")" == "18443" ]]
 
 echo "nginx ipv6 listen ok"
