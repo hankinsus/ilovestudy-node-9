@@ -63,5 +63,10 @@ if jiuheyiXraySocks5IsGlobal; then
     echo "domain-only zz_egress marked global"
     exit 1
 fi
+printf '%s\n' '{"outbounds":[{"tag":"socks5_outbound"}]}' >"$work/etc/xray/conf/socks5_outbound.json"
+printf '%s\n' '{"outbounds":[{"tag":"socks5_outbound"}]}' >"$work/etc/xray/conf/zz_socks5_outbound.json"
+jiuheyiApplySocks5DomainRules '["geosite:netflix"]'
+[[ -f "$work/etc/xray/conf/socks5_outbound.json" ]]
+[[ ! -e "$work/etc/xray/conf/zz_socks5_outbound.json" ]]
 
 echo "socks5 nonglobal ok"

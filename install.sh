@@ -6,7 +6,7 @@
 # 联合安装 AimiliVPN 时，出站为 127.0.0.1:8500。账号读 /opt/aimilivpn/vpngate_data/proxy_auth.json，没有就用 socks5 / ilovestudy。
 # 检测区
 # -------------------------------------------------------------
-jiuheyi_version="V1.1.13"
+jiuheyi_version="V1.1.14"
 # 检查系统
 export LANG=en_US.UTF-8
 
@@ -8478,6 +8478,10 @@ jiuheyiApplySocks5DomainRules() {
       )
     ' "${egress}")" || return 1
     printf '%s\n' "${tmp}" >"${egress}"
+    # 菜单出站和 zz_socks5_outbound.json 的 tag 都是 socks5_outbound。两个都留着 Xray 起不来。
+    if [[ -f "${configPath}socks5_outbound.json" ]]; then
+        rm -f "${configPath}zz_socks5_outbound.json"
+    fi
     local dns="${configPath}00_dns.json"
     if [[ -f "${dns}" ]] && jq -e '.dns.servers[]?|select(.detour=="socks5_outbound")' "${dns}" >/dev/null 2>&1; then
         local query
@@ -11243,6 +11247,7 @@ EOF
   }
 }
 EOF
+    rm -f /etc/v2ray-agent/xray/conf/socks5_outbound.json
     aimiliSocksAuthJson
     cat <<EOF >/etc/v2ray-agent/xray/conf/zz_socks5_outbound.json
 {
