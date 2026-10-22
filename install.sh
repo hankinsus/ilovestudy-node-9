@@ -6,7 +6,7 @@
 # 联合安装 AimiliVPN 时，出站为 127.0.0.1:8500。账号读 /opt/aimilivpn/vpngate_data/proxy_auth.json，没有就用 socks5 / ilovestudy。
 # 检测区
 # -------------------------------------------------------------
-jiuheyi_version="V1.1.10"
+jiuheyi_version="V1.1.11"
 # 检查系统
 export LANG=en_US.UTF-8
 
@@ -7966,6 +7966,87 @@ socks5OutboundRoutingMenu() {
 }
 
 # socks5全局
+# 菜单里填写的落地机写入真正生效的 zz_socks5_outbound.json。
+# 只写 socks5_outbound.json 时，zz_egress 仍是最后一份分流，流量到不了刚填的账号。
+jiuheyiWriteXraySocks5Global() {
+    [[ "${coreInstallType}" == "1" ]] || return 0
+    [[ "${socks5RoutingOutboundPort}" =~ ^[0-9]+$ ]] || return 1
+    local dir="${configPath:-/etc/v2ray-agent/xray/conf/}"
+    local userJson passJson query_strategy
+    userJson=$(jq -nc --arg v "${socks5RoutingOutboundUserName}" '$v')
+    passJson=$(jq -nc --arg v "${socks5RoutingOutboundPassword}" '$v')
+    query_strategy="$(jiuheyiXrayQueryStrategy)"
+    rm -f "${dir}socks5_outbound.json"
+    addXrayOutbound z_direct_outbound
+    cat >"${dir}zz_socks5_outbound.json" <<EOF
+{
+  "outbounds": [
+    {
+      "protocol": "socks",
+      "tag": "socks5_outbound",
+      "settings": {
+        "servers": [
+          {
+            "address": "${socks5RoutingOutboundIP}",
+            "port": ${socks5RoutingOutboundPort},
+            "users": [{"user": ${userJson}, "pass": ${passJson}}]
+          }
+        ]
+      },
+      "streamSettings": {
+        "sockopt": {
+          "tcpKeepAliveIdle": 30,
+          "tcpKeepAliveInterval": 15
+        }
+      }
+    }
+  ]
+}
+EOF
+    cat >"${dir}zz_egress.json" <<EOF
+{
+  "routing": {
+    "domainStrategy": "AsIs",
+    "rules": [
+      $(jiuheyiRealityLoopbackRule),
+      {
+        "type": "field",
+        "domain": ["www.apple.com", "www.microsoft.com", "apple.com", "microsoft.com"],
+        "outboundTag": "z_direct_outbound"
+      },
+      {
+        "type": "field",
+        "network": "tcp,udp",
+        "outboundTag": "socks5_outbound"
+      }
+    ]
+  }
+}
+EOF
+    cat >"${dir}00_dns.json" <<EOF
+{
+  "dns": {
+    "queryStrategy": "${query_strategy}",
+    "servers": [
+      {
+        "address": "1.1.1.1",
+        "domains": ["full:www.apple.com", "full:www.microsoft.com", "domain:apple.com", "domain:microsoft.com"],
+        "skipFallback": true
+      },
+      {
+        "address": "1.1.1.1",
+        "detour": "socks5_outbound"
+      }
+    ]
+  }
+}
+EOF
+    # 保持 global 的话，菜单 18 会用 Aimili 账号重写 zz_socks5_outbound.json，盖掉刚填的落地机。
+    if [[ "$(tr -d '[:space:]' </etc/v2ray-agent/jiuheyi_dns_mode 2>/dev/null || true)" == "global" ]]; then
+        printf '%s\n' socks5 >/etc/v2ray-agent/jiuheyi_dns_mode
+    fi
+}
+
 setSocks5OutboundRoutingAll() {
 
     echoContent red "=============================================================="
@@ -7997,6 +8078,10 @@ setSocks5OutboundRoutingAll() {
 
             removeSingBoxConfig socks5_01_outbound_route
             removeSingBoxConfig 01_direct_outbound
+        fi
+
+        if [[ "${coreInstallType}" == "1" ]]; then
+            jiuheyiWriteXraySocks5Global
         fi
 
         echoContent green " ---> Socks5全局出站设置完毕"
