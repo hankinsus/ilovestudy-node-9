@@ -6,7 +6,7 @@
 # 联合安装 AimiliVPN 时，出站为 127.0.0.1:8500。账号读 /opt/aimilivpn/vpngate_data/proxy_auth.json，没有就用 socks5 / ilovestudy。
 # 检测区
 # -------------------------------------------------------------
-jiuheyi_version="V1.1.12"
+jiuheyi_version="V1.1.13"
 # 检查系统
 export LANG=en_US.UTF-8
 
@@ -8119,6 +8119,15 @@ showSingBoxRoutingRules() {
     fi
 }
 
+# xray 多个 routing 里只有最后一份生效。zz_egress.json 在时，全局与否只看它有没有 tcp,udp 全走 socks5。
+jiuheyiXraySocks5IsGlobal() {
+    local route_file=""
+    [[ -f "${configPath}09_routing.json" ]] && route_file="${configPath}09_routing.json"
+    [[ -f "${configPath}zz_egress.json" ]] && route_file="${configPath}zz_egress.json"
+    [[ -n "${route_file}" ]] || return 1
+    jq -e '.routing.rules[]?|select(.outboundTag=="socks5_outbound" and .network=="tcp,udp")' "${route_file}" >/dev/null 2>&1
+}
+
 # xray内核分流规则
 showXrayRoutingRules() {
     if [[ "${coreInstallType}" == "1" ]]; then
@@ -8136,9 +8145,9 @@ showXrayRoutingRules() {
             fi
         done
         if [[ "$1" == "socks5_outbound" && -n "${out_file}" ]]; then
-            if jq -e --arg tag "$1" '.routing.rules[]?|select(.outboundTag==$tag and .network=="tcp,udp")' "${configPath}09_routing.json" "${configPath}zz_egress.json" >/dev/null 2>&1; then
+            if jiuheyiXraySocks5IsGlobal; then
                 echoContent yellow "\n已安装 xray-core socks5全局出站分流"
-            elif [[ "${found}" == "1" ]]; then
+            else
                 echoContent yellow "\n已安装 xray-core socks5出站，未设置全局"
             fi
             echoContent yellow "\n出站分流配置（$(basename "${out_file}")）："

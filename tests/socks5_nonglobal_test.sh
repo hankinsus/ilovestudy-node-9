@@ -46,4 +46,22 @@ jq -e '.routing.rules[]|select(.network=="tcp,udp" and .outboundTag=="socks5_out
 jq -e '.dns.servers[]?|select(type=="object" and .detour=="socks5_outbound")' "$work/etc/xray/conf/00_dns.json" >/dev/null && { echo "dns still detours"; exit 1; }
 [[ "$(tr -d '[:space:]' <"$work/etc/jiuheyi_dns_mode")" == "socks5" ]]
 
+awk '
+    /^jiuheyiXraySocks5IsGlobal\(\)/ {p=1}
+    /^# xray内核分流规则/ {p=0}
+    p
+' "$script" >"$work/global.sh"
+# shellcheck disable=SC1091
+source "$work/global.sh"
+printf '%s\n' '{"routing":{"rules":[{"type":"field","domain":["example.com"],"outboundTag":"socks5_outbound"}]}}' >"$work/etc/xray/conf/09_routing.json"
+printf '%s\n' '{"routing":{"rules":[{"type":"field","network":"tcp,udp","outboundTag":"socks5_outbound"}]}}' >"$work/etc/xray/conf/zz_egress.json"
+jiuheyiXraySocks5IsGlobal
+rm -f "$work/etc/xray/conf/09_routing.json"
+jiuheyiXraySocks5IsGlobal
+printf '%s\n' '{"routing":{"rules":[{"type":"field","domain":["example.com"],"outboundTag":"socks5_outbound"}]}}' >"$work/etc/xray/conf/zz_egress.json"
+if jiuheyiXraySocks5IsGlobal; then
+    echo "domain-only zz_egress marked global"
+    exit 1
+fi
+
 echo "socks5 nonglobal ok"
