@@ -14,6 +14,7 @@ jobs:
           bash tests/oneclick_guard_test.sh
           bash tests/swap_skip_test.sh
           bash tests/nginx_ipv6_listen_test.sh
+          bash tests/socks5_uninstall_test.sh
       - name: Install Reality without a domain
         run: sudo JIUHEYI_REALITY_DOMAIN=www.apple.com bash "$GITHUB_WORKSPACE/install.sh"
       - name: Check the result

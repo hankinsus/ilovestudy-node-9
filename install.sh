@@ -6,7 +6,7 @@
 # 联合安装 AimiliVPN 时，出站为 127.0.0.1:8500。账号读 /opt/aimilivpn/vpngate_data/proxy_auth.json，没有就用 socks5 / ilovestudy。
 # 检测区
 # -------------------------------------------------------------
-jiuheyi_version="V1.1.9"
+jiuheyi_version="V1.1.10"
 # 检查系统
 export LANG=en_US.UTF-8
 
@@ -7492,7 +7492,7 @@ EOF
 unInstallRouting() {
     local tag=$1
     local type=$2
-    local protocol=$3
+    local protocol=${3:-}
 
     if [[ -f "${configPath}09_routing.json" ]]; then
         local routing=
@@ -8049,6 +8049,28 @@ showXrayRoutingRules() {
     fi
 }
 
+# 卸载Socks5出站。菜单安装在 socks5_outbound.json / 09_routing.json；
+# 全局分流在 zz_socks5_outbound.json / zz_egress.json。只删前者时，查看仍显示已安装。
+# 模式保持 global 时，菜单 18 更新还会把 zz_* 写回来。
+jiuheyiRemoveSocks5Outbound() {
+    if [[ "${coreInstallType}" == "1" ]]; then
+        removeXrayOutbound socks5_outbound
+        unInstallRouting socks5_outbound outboundTag
+    fi
+    if [[ -n "${singBoxConfigPath}" ]]; then
+        removeSingBoxConfig socks5_outbound
+        removeSingBoxConfig socks5_01_outbound_route
+        addSingBoxOutbound 01_direct_outbound
+    fi
+    rm -f /etc/v2ray-agent/sing-box/conf/config/socks5_outbound.json
+    if [[ -f /etc/v2ray-agent/xray/conf/zz_socks5_outbound.json || -f /etc/v2ray-agent/xray/conf/zz_egress.json ]] || [[ "$(tr -d '[:space:]' </etc/v2ray-agent/jiuheyi_dns_mode 2>/dev/null)" == "global" ]]; then
+        jiuheyiApplyDnsMode direct
+    fi
+    if [[ "${coreInstallType}" == "1" ]]; then
+        addXrayOutbound z_direct_outbound
+    fi
+}
+
 # 卸载Socks5分流
 removeSocks5Routing() {
     echoContent skyBlue "\n功能 1/1 : 卸载Socks5分流"
@@ -8059,18 +8081,7 @@ removeSocks5Routing() {
     echoContent yellow "3.卸载全部"
     read -r -p "请选择:" unInstallSocks5RoutingStatus
     if [[ "${unInstallSocks5RoutingStatus}" == "1" ]]; then
-        if [[ "${coreInstallType}" == "1" ]]; then
-            removeXrayOutbound socks5_outbound
-            unInstallRouting socks5_outbound outboundTag
-
-            addXrayOutbound z_direct_outbound
-        fi
-
-        if [[ -n "${singBoxConfigPath}" ]]; then
-            removeSingBoxConfig socks5_outbound
-            removeSingBoxConfig socks5_01_outbound_route
-            addSingBoxOutbound 01_direct_outbound
-        fi
+        jiuheyiRemoveSocks5Outbound
 
     elif [[ "${unInstallSocks5RoutingStatus}" == "2" ]]; then
 
@@ -8082,23 +8093,13 @@ removeSocks5Routing() {
 
         handleSingBox stop
     elif [[ "${unInstallSocks5RoutingStatus}" == "3" ]]; then
-        if [[ "${coreInstallType}" == "1" ]]; then
-            removeXrayOutbound socks5_outbound
-            unInstallRouting socks5_outbound outboundTag
-            addXrayOutbound z_direct_outbound
-        fi
+        jiuheyiRemoveSocks5Outbound
 
-        if [[ -n "${singBoxConfigPath}" ]]; then
-            removeSingBoxConfig socks5_outbound
-            removeSingBoxConfig socks5_01_outbound_route
-            removeSingBoxConfig 20_socks5_inbounds
-            removeSingBoxConfig socks5_02_inbound_route
-            removeSingBoxConfig sniff_socks5_inbound
-            removeSingBoxConfig "strategy_ipv4_only_socks5_inbound"
-            removeSingBoxConfig "strategy_ipv6_only_socks5_inbound"
-
-            addSingBoxOutbound 01_direct_outbound
-        fi
+        removeSingBoxConfig 20_socks5_inbounds
+        removeSingBoxConfig socks5_02_inbound_route
+        removeSingBoxConfig sniff_socks5_inbound
+        removeSingBoxConfig "strategy_ipv4_only_socks5_inbound"
+        removeSingBoxConfig "strategy_ipv6_only_socks5_inbound"
 
         handleSingBox stop
     else
