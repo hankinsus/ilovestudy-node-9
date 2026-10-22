@@ -6,7 +6,7 @@
 # 联合安装 AimiliVPN 时，出站为 127.0.0.1:8500。账号读 /opt/aimilivpn/vpngate_data/proxy_auth.json，没有就用 socks5 / ilovestudy。
 # 检测区
 # -------------------------------------------------------------
-jiuheyi_version="V1.1.14"
+jiuheyi_version="V1.1.15"
 # 检查系统
 export LANG=en_US.UTF-8
 
@@ -7044,7 +7044,7 @@ EOF
     reloadCore
 }
 
-# 域名黑名单
+# 规则列表。屏蔽是丢弃，白名单是本机直连。没有 Socks5 时屏蔽同样生效。
 blacklist() {
     if [[ -z "${configPath}" ]]; then
         echoContent red " ---> 未安装，请使用脚本安装"
@@ -7052,21 +7052,21 @@ blacklist() {
         exit 0
     fi
 
-    echoContent skyBlue "\n进度  $1/${totalProgress} : 域名黑名单"
+    echoContent skyBlue "\n进度  $1/${totalProgress} : 规则列表"
     echoContent red "\n=============================================================="
-    echoContent yellow "1.查看已屏蔽域名"
-    echoContent yellow "2.添加域名"
+    echoContent yellow "1.添加屏蔽域名"
+    echoContent yellow "2.添加屏蔽IP"
     echoContent yellow "3.屏蔽大陆域名+IP"
-    echoContent yellow "4.卸载黑/白名单"
-    echoContent yellow "5.添加IP"
-    echoContent yellow "6.添加域名白名单"
+    echoContent yellow "4.添加域名白名单"
+    echoContent yellow "5.添加IP白名单"
+    echoContent yellow "6.查看规则"
+    echoContent yellow "7.卸载屏蔽域名IP"
+    echoContent yellow "8.卸载白名单域名IP"
+    echoContent yellow "9.卸载全部"
     echoContent red "=============================================================="
 
     read -r -p "请选择:" blacklistStatus
     if [[ "${blacklistStatus}" == "1" ]]; then
-        jq -r -c '.routing.rules[]|select (.outboundTag=="blackhole_out")|.domain' ${configPath}09_routing.json | jq -r
-        exit 0
-    elif [[ "${blacklistStatus}" == "2" ]]; then
         echoContent red "=============================================================="
         echoContent yellow "# 注意事项\n"
         echoContent yellow "1.规则支持预定义域名列表[https://github.com/v2fly/domain-list-community]"
@@ -7074,7 +7074,12 @@ blacklist() {
         echoContent yellow "3.录入示例:speedtest,facebook,cn,example.com"
         echoContent yellow "4.如果域名在预定义域名列表中存在则使用 geosite:xx，如果不存在则默认使用输入的域名"
         echoContent yellow "5.添加规则为增量配置，不会删除之前设置的内容\n"
+        echoContent yellow "6.屏蔽是丢弃，与有没有 Socks5 无关\n"
         read -r -p "请按照上面示例录入域名:" domainList
+        if [[ -z "${domainList}" ]]; then
+            echoContent red " ---> 域名不可为空"
+            exit 0
+        fi
         if [[ "${coreInstallType}" == "1" ]]; then
             addXrayRouting blackhole_out outboundTag "${domainList}"
             addXrayOutbound blackhole_out
@@ -7085,8 +7090,28 @@ blacklist() {
             addSingBoxOutbound "block_domain_outbound"
             addSingBoxOutbound "01_direct_outbound"
         fi
-        echoContent green " ---> 添加完毕"
+        echoContent green " ---> 添加屏蔽域名完毕"
 
+    elif [[ "${blacklistStatus}" == "2" ]]; then
+        echoContent red "=============================================================="
+        echoContent yellow "录入示例:1.1.1.1,8.8.8.8,1.1.1.0/24,2400:3200::/32\n"
+        echoContent yellow "屏蔽是丢弃\n"
+        read -r -p "请按照上面示例录入IP:" ipList
+        if [[ -z "${ipList}" ]]; then
+            echoContent red " ---> IP不可为空"
+            exit 0
+        fi
+
+        if [[ "${coreInstallType}" == "1" ]]; then
+            addXrayIPRouting blackhole_ip_out outboundTag "${ipList}"
+            addXrayOutbound blackhole_ip_out
+        fi
+
+        if [[ -n "${singBoxConfigPath}" ]]; then
+            addSingBoxIPRouteRule "block_ip_outbound" "${ipList}" "block_ip_route"
+            addSingBoxOutbound "block_ip_outbound"
+        fi
+        echoContent green " ---> 添加屏蔽IP完毕"
     elif [[ "${blacklistStatus}" == "3" ]]; then
         local allowDomainList="googleplay.com,play.google.com,play.googleapis.com,play-lh.googleusercontent.com,play-games.googleusercontent.com,play-fe.googleapis.com,dl.google.com,apple.com,apple-pki,apple-tvplus,apple-update,itunes,icloud,beats,bing.com,microsoft.com,gstatic,xn--ngstr-lra8j.com,googleapis.com,googleapis.cn"
 
@@ -7117,50 +7142,8 @@ blacklist() {
         echoContent green " ---> 屏蔽大陆域名+IP完毕"
 
     elif [[ "${blacklistStatus}" == "4" ]]; then
-        if [[ "${coreInstallType}" == "1" ]]; then
-            unInstallRouting blackhole_out outboundTag
-            unInstallRouting blackhole_ip_out outboundTag
-            unInstallRouting allow_domain_direct_outbound outboundTag
-
-            removeXrayOutbound blackhole_ip_out
-            removeXrayOutbound allow_domain_direct_outbound
-        fi
-
-        if [[ -n "${singBoxConfigPath}" ]]; then
-            removeSingBoxConfig "cn_block_route"
-            removeSingBoxConfig "cn_block_outbound"
-            removeSingBoxConfig "cn_block_ip_route"
-            removeSingBoxConfig "block_ip_route"
-            removeSingBoxConfig "block_ip_outbound"
-
-            removeSingBoxConfig "cn_01_google_play_route"
-            removeSingBoxConfig "00_allow_domain_route"
-
-            removeSingBoxConfig "block_domain_route"
-            removeSingBoxConfig "block_domain_outbound"
-        fi
-        echoContent green " ---> 域名黑名单/白名单删除完毕"
-    elif [[ "${blacklistStatus}" == "5" ]]; then
         echoContent red "=============================================================="
-        echoContent yellow "录入示例:1.1.1.1,8.8.8.8,1.1.1.0/24,2400:3200::/32\n"
-        read -r -p "请按照上面示例录入IP:" ipList
-        if [[ -z "${ipList}" ]]; then
-            echoContent red " ---> IP不可为空"
-            exit 0
-        fi
-
-        if [[ "${coreInstallType}" == "1" ]]; then
-            addXrayIPRouting blackhole_ip_out outboundTag "${ipList}"
-            addXrayOutbound blackhole_ip_out
-        fi
-
-        if [[ -n "${singBoxConfigPath}" ]]; then
-            addSingBoxIPRouteRule "block_ip_outbound" "${ipList}" "block_ip_route"
-            addSingBoxOutbound "block_ip_outbound"
-        fi
-        echoContent green " ---> 添加IP完毕"
-    elif [[ "${blacklistStatus}" == "6" ]]; then
-        echoContent red "=============================================================="
+        echoContent yellow "白名单是本机直连，不是走 Socks5\n"
         echoContent yellow "录入示例:speedtest,openai,google.com\n"
         read -r -p "请按照上面示例录入域名:" allowDomainList
         if [[ -z "${allowDomainList}" ]]; then
@@ -7178,6 +7161,104 @@ blacklist() {
             addSingBoxOutbound "01_direct_outbound"
         fi
         echoContent green " ---> 添加域名白名单完毕"
+    elif [[ "${blacklistStatus}" == "5" ]]; then
+        echoContent red "=============================================================="
+        echoContent yellow "白名单是本机直连，不是走 Socks5\n"
+        echoContent yellow "录入示例:1.1.1.1,8.8.8.8,1.1.1.0/24,2400:3200::/32\n"
+        read -r -p "请按照上面示例录入IP:" ipList
+        if [[ -z "${ipList}" ]]; then
+            echoContent red " ---> IP不可为空"
+            exit 0
+        fi
+
+        if [[ "${coreInstallType}" == "1" ]]; then
+            addXrayIPRouting allow_ip_direct_outbound outboundTag "${ipList}" top
+            addXrayOutbound allow_ip_direct_outbound
+        fi
+
+        if [[ -n "${singBoxConfigPath}" ]]; then
+            addSingBoxIPRouteRule "01_direct_outbound" "${ipList}" "00_allow_ip_route"
+            addSingBoxOutbound "01_direct_outbound"
+        fi
+        echoContent green " ---> 添加IP白名单完毕"
+    elif [[ "${blacklistStatus}" == "6" ]]; then
+        if [[ "${coreInstallType}" == "1" && -f "${configPath}09_routing.json" ]]; then
+            echoContent yellow "\n屏蔽域名"
+            jq -r '.routing.rules[]?|select(.outboundTag=="blackhole_out")|.domain[]?' "${configPath}09_routing.json"
+            echoContent yellow "\n屏蔽IP"
+            jq -r '.routing.rules[]?|select(.outboundTag=="blackhole_ip_out")|.ip[]?' "${configPath}09_routing.json"
+            echoContent yellow "\n白名单域名"
+            jq -r '.routing.rules[]?|select(.outboundTag=="allow_domain_direct_outbound")|.domain[]?' "${configPath}09_routing.json"
+            echoContent yellow "\n白名单IP"
+            jq -r '.routing.rules[]?|select(.outboundTag=="allow_ip_direct_outbound")|.ip[]?' "${configPath}09_routing.json"
+        fi
+        if [[ -n "${singBoxConfigPath}" ]]; then
+            local ruleFile ruleTitle
+            for ruleTitle in "屏蔽域名:block_domain_route" "屏蔽IP:block_ip_route" "屏蔽大陆域名:cn_block_route" "屏蔽大陆IP:cn_block_ip_route" "白名单域名:00_allow_domain_route" "白名单IP:00_allow_ip_route"; do
+                ruleFile="${singBoxConfigPath}${ruleTitle#*:}.json"
+                echoContent yellow "\n${ruleTitle%%:*}"
+                if [[ -f "${ruleFile}" ]]; then
+                    echoContent skyBlue "$(jq -c '.route.rules' "${ruleFile}")"
+                else
+                    echoContent yellow "无"
+                fi
+            done
+        fi
+        exit 0
+    elif [[ "${blacklistStatus}" == "7" ]]; then
+        if [[ "${coreInstallType}" == "1" ]]; then
+            unInstallRouting blackhole_out outboundTag
+            unInstallRouting blackhole_ip_out outboundTag
+            removeXrayOutbound blackhole_out
+            removeXrayOutbound blackhole_ip_out
+        fi
+        if [[ -n "${singBoxConfigPath}" ]]; then
+            removeSingBoxConfig "cn_block_route"
+            removeSingBoxConfig "cn_block_outbound"
+            removeSingBoxConfig "cn_block_ip_route"
+            removeSingBoxConfig "block_ip_route"
+            removeSingBoxConfig "block_ip_outbound"
+            removeSingBoxConfig "block_domain_route"
+            removeSingBoxConfig "block_domain_outbound"
+        fi
+        echoContent green " ---> 卸载屏蔽域名IP完毕"
+    elif [[ "${blacklistStatus}" == "8" ]]; then
+        if [[ "${coreInstallType}" == "1" ]]; then
+            unInstallRouting allow_domain_direct_outbound outboundTag
+            unInstallRouting allow_ip_direct_outbound outboundTag
+            removeXrayOutbound allow_domain_direct_outbound
+            removeXrayOutbound allow_ip_direct_outbound
+        fi
+        if [[ -n "${singBoxConfigPath}" ]]; then
+            removeSingBoxConfig "cn_01_google_play_route"
+            removeSingBoxConfig "00_allow_domain_route"
+            removeSingBoxConfig "00_allow_ip_route"
+        fi
+        echoContent green " ---> 卸载白名单域名IP完毕"
+    elif [[ "${blacklistStatus}" == "9" ]]; then
+        if [[ "${coreInstallType}" == "1" ]]; then
+            unInstallRouting blackhole_out outboundTag
+            unInstallRouting blackhole_ip_out outboundTag
+            unInstallRouting allow_domain_direct_outbound outboundTag
+            unInstallRouting allow_ip_direct_outbound outboundTag
+            removeXrayOutbound blackhole_out
+            removeXrayOutbound blackhole_ip_out
+            removeXrayOutbound allow_domain_direct_outbound
+            removeXrayOutbound allow_ip_direct_outbound
+        fi
+        if [[ -n "${singBoxConfigPath}" ]]; then
+            removeSingBoxConfig "cn_block_route"
+            removeSingBoxConfig "cn_block_outbound"
+            removeSingBoxConfig "cn_block_ip_route"
+            removeSingBoxConfig "block_ip_route"
+            removeSingBoxConfig "block_ip_outbound"
+            removeSingBoxConfig "cn_01_google_play_route"
+            removeSingBoxConfig "00_allow_domain_route"
+            removeSingBoxConfig "00_allow_ip_route"
+            removeSingBoxConfig "block_domain_route"
+            removeSingBoxConfig "block_domain_outbound"
+        fi
+        echoContent green " ---> 卸载全部完毕"
     else
         echoContent red " ---> 选择错误"
         exit 0
@@ -7420,7 +7501,11 @@ EOF
 
     unInstallRouting "${tag}" "${type}"
     local routing=
-    routing=$(jq -r ".routing.rules += [${routingRule}]" ${configPath}09_routing.json)
+    if [[ "${4:-}" == "top" ]]; then
+        routing=$(jq -r ".routing.rules = [${routingRule}] + .routing.rules" ${configPath}09_routing.json)
+    else
+        routing=$(jq -r ".routing.rules += [${routingRule}]" ${configPath}09_routing.json)
+    fi
     echo "${routing}" | jq . >${configPath}09_routing.json
 }
 
@@ -10697,7 +10782,7 @@ menu() {
     echoContent yellow "19.DNS模式"
     echoContent yellow "12.添加新端口"
     echoContent yellow "13.BT下载管理"
-    echoContent yellow "15.域名黑名单"
+    echoContent yellow "15.规则列表"
     echoContent skyBlue "-------------------------版本管理-----------------------------"
     echoContent yellow "16.core管理"
     echoContent yellow "17.安装BBR、DD脚本"
