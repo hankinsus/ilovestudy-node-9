@@ -6,7 +6,7 @@
 # 联合安装 AimiliVPN 时，出站为 127.0.0.1:8500。账号读 /opt/aimilivpn/vpngate_data/proxy_auth.json，没有就用 socks5 / ilovestudy。
 # 检测区
 # -------------------------------------------------------------
-jiuheyi_version="V1.1.11"
+jiuheyi_version="V1.1.12"
 # 检查系统
 export LANG=en_US.UTF-8
 
@@ -8083,6 +8083,11 @@ setSocks5OutboundRoutingAll() {
         if [[ "${coreInstallType}" == "1" ]]; then
             jiuheyiWriteXraySocks5Global
         fi
+        if [[ -n "${singBoxConfigPath}" || -d /etc/v2ray-agent/sing-box/conf/config ]]; then
+            mkdir -p /etc/v2ray-agent/sing-box/conf/config
+            : >/etc/v2ray-agent/sing-box/conf/config/socks5_outbound.global
+            rm -f /etc/v2ray-agent/sing-box/conf/config/socks5_01_outbound_route.json
+        fi
 
         echoContent green " ---> Socks5全局出站设置完毕"
     fi
@@ -8093,11 +8098,17 @@ showSingBoxRoutingRules() {
         if [[ -f "${singBoxConfigPath}$1.json" ]]; then
             jq .route.rules "${singBoxConfigPath}$1.json"
         elif [[ "$1" == "socks5_01_outbound_route" && -f "${singBoxConfigPath}socks5_outbound.json" ]]; then
-            # 联合安装是全局出站：route.final 指向 socks5_outbound
+            # 联合安装是全局出站：route.final 指向 socks5_outbound。非全局只有出站，没有 final。
+            local routeFinal="无"
             if [[ -f /etc/v2ray-agent/sing-box/conf/config.json ]]; then
-                echoContent yellow "route.final: $(jq -r '.route.final // "无"' /etc/v2ray-agent/sing-box/conf/config.json 2>/dev/null)"
+                routeFinal="$(jq -r '.route.final // "无"' /etc/v2ray-agent/sing-box/conf/config.json 2>/dev/null)"
             fi
-            echoContent yellow "已安装 sing-box socks5全局出站分流"
+            echoContent yellow "route.final: ${routeFinal}"
+            if [[ "${routeFinal}" == "socks5_outbound" || -f /etc/v2ray-agent/sing-box/conf/config/socks5_outbound.global ]]; then
+                echoContent yellow "已安装 sing-box socks5全局出站分流"
+            else
+                echoContent yellow "已安装 sing-box socks5出站，未设置全局"
+            fi
             echoContent yellow "\n出站分流配置："
             echoContent skyBlue "$(jq .outbounds[0] ${singBoxConfigPath}socks5_outbound.json)"
         elif [[ "$1" == "socks5_02_inbound_route" && -f "${singBoxConfigPath}20_socks5_inbounds.json" ]]; then
@@ -8125,7 +8136,11 @@ showXrayRoutingRules() {
             fi
         done
         if [[ "$1" == "socks5_outbound" && -n "${out_file}" ]]; then
-            [[ "${found}" == "1" ]] && echoContent yellow "\n已安装 xray-core socks5全局出站分流"
+            if jq -e --arg tag "$1" '.routing.rules[]?|select(.outboundTag==$tag and .network=="tcp,udp")' "${configPath}09_routing.json" "${configPath}zz_egress.json" >/dev/null 2>&1; then
+                echoContent yellow "\n已安装 xray-core socks5全局出站分流"
+            elif [[ "${found}" == "1" ]]; then
+                echoContent yellow "\n已安装 xray-core socks5出站，未设置全局"
+            fi
             echoContent yellow "\n出站分流配置（$(basename "${out_file}")）："
             echoContent skyBlue "$(jq .outbounds[0].settings.servers[0] "${out_file}")"
         elif [[ "${found}" != "1" ]]; then
@@ -8147,7 +8162,7 @@ jiuheyiRemoveSocks5Outbound() {
         removeSingBoxConfig socks5_01_outbound_route
         addSingBoxOutbound 01_direct_outbound
     fi
-    rm -f /etc/v2ray-agent/sing-box/conf/config/socks5_outbound.json
+    rm -f /etc/v2ray-agent/sing-box/conf/config/socks5_outbound.json /etc/v2ray-agent/sing-box/conf/config/socks5_outbound.global
     if [[ -f /etc/v2ray-agent/xray/conf/zz_socks5_outbound.json || -f /etc/v2ray-agent/xray/conf/zz_egress.json ]] || [[ "$(tr -d '[:space:]' </etc/v2ray-agent/jiuheyi_dns_mode 2>/dev/null)" == "global" ]]; then
         jiuheyiApplyDnsMode direct
     fi
@@ -8339,10 +8354,16 @@ setSocks5InboundRouting() {
 
 }
 
-# 探测超时 300ms。只有已经写了 8500 出站时，才把最终出口指过去。
+# 探测超时 300ms。联合安装只有 socks5_outbound.json、没有按域名的分流文件，最终出口仍是 socks5。
+# 菜单加了域名分流（socks5_01_outbound_route.json）才是非全局，这时不能设 final。
+jiuheyiSingboxSocks5IsGlobal() {
+    [[ -s /etc/v2ray-agent/sing-box/conf/config/socks5_outbound.json ]] || return 1
+    [[ -s /etc/v2ray-agent/sing-box/conf/config/socks5_01_outbound_route.json ]] && return 1
+    return 0
+}
 setSniffRouting() {
     local finalLine=""
-    if [[ -s "/etc/v2ray-agent/sing-box/conf/config/socks5_outbound.json" ]]; then
+    if jiuheyiSingboxSocks5IsGlobal; then
         finalLine='"final": "socks5_outbound"'
     fi
     cat <<EOF >"/etc/v2ray-agent/sing-box/conf/config/sniff.json"
@@ -8408,6 +8429,9 @@ setSocks5Outbound() {
     fi
     echo
     if [[ -n "${singBoxConfigPath}" ]]; then
+        local userJson passJson
+        userJson=$(jq -nc --arg v "${socks5RoutingOutboundUserName}" '$v')
+        passJson=$(jq -nc --arg v "${socks5RoutingOutboundPassword}" '$v')
         cat <<EOF >"${singBoxConfigPath}socks5_outbound.json"
 {
     "outbounds":[
@@ -8417,8 +8441,11 @@ setSocks5Outbound() {
           "server": "${socks5RoutingOutboundIP}",
           "server_port": ${socks5RoutingOutboundPort},
           "version": "5",
-          "username":"${socks5RoutingOutboundUserName}",
-          "password":"${socks5RoutingOutboundPassword}"
+          "username":${userJson},
+          "password":${passJson},
+          "tcp_keep_alive": "30s",
+          "tcp_keep_alive_interval": "15s",
+          "domain_strategy": "$(jiuheyiSingboxDomainStrategy)"
         }
     ]
 }
@@ -8429,10 +8456,42 @@ EOF
     fi
 }
 
+# 非全局：域名规则写进当前生效的分流。zz_egress 在时它盖过 09_routing，还要把 tcp,udp 全走 socks5 的那条拿掉。
+jiuheyiApplySocks5DomainRules() {
+    local domainsJson=$1
+    local egress="${configPath}zz_egress.json"
+    [[ -f "${egress}" ]] || return 1
+    local tmp
+    tmp="$(jq --argjson d "${domainsJson}" '
+      .routing.rules = (
+        [ .routing.rules[] | select(.outboundTag != "socks5_outbound") ]
+        + [{ "type": "field", "domain": $d, "outboundTag": "socks5_outbound" }]
+      )
+    ' "${egress}")" || return 1
+    printf '%s\n' "${tmp}" >"${egress}"
+    local dns="${configPath}00_dns.json"
+    if [[ -f "${dns}" ]] && jq -e '.dns.servers[]?|select(.detour=="socks5_outbound")' "${dns}" >/dev/null 2>&1; then
+        local query
+        query="$(jq -r '.dns.queryStrategy // "UseIPv4"' "${dns}")"
+        cat >"${dns}" <<EOF
+{
+  "dns": {
+    "queryStrategy": "${query}",
+    "servers": ["1.1.1.1", "8.8.8.8"]
+  }
+}
+EOF
+    fi
+    if [[ "$(tr -d '[:space:]' </etc/v2ray-agent/jiuheyi_dns_mode 2>/dev/null || true)" == "global" ]]; then
+        printf '%s\n' socks5 >/etc/v2ray-agent/jiuheyi_dns_mode
+    fi
+    return 0
+}
+
 # socks5 outbound routing规则
 setSocks5OutboundRouting() {
 
-    if [[ "$1" == "addRules" && ! -f "${singBoxConfigPath}socks5_01_outbound_route.json" && ! -f "${configPath}09_routing.json" ]]; then
+    if [[ "$1" == "addRules" && ! -f "${singBoxConfigPath:-}socks5_01_outbound_route.json" && ! -f "${configPath}09_routing.json" && ! -f "${configPath}zz_egress.json" && ! -f "${configPath}zz_socks5_outbound.json" && ! -f "${configPath}socks5_outbound.json" && ! -f "${singBoxConfigPath:-}socks5_outbound.json" ]]; then
         echoContent red " ---> 请安装出站分流后再添加分流规则"
         exit 0
     fi
@@ -8449,6 +8508,7 @@ setSocks5OutboundRouting() {
         echoContent red " ---> IP不可为空"
         exit 0
     fi
+    rm -f /etc/v2ray-agent/sing-box/conf/config/socks5_outbound.global
     addSingBoxRouteRule "socks5_outbound" "${socks5RoutingOutboundDomain}" "socks5_01_outbound_route"
     addSingBoxOutbound "01_direct_outbound"
 
@@ -8476,6 +8536,7 @@ EOF
         fi
         routing=$(jq -r ".routing.rules += [{\"type\": \"field\",\"domain\": ${domainRules},\"outboundTag\": \"socks5_outbound\"}]" ${configPath}09_routing.json)
         echo "${routing}" | jq . >${configPath}09_routing.json
+        jiuheyiApplySocks5DomainRules "${domainRules}" || true
     fi
 }
 
