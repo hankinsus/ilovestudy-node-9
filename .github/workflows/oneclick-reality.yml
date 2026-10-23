@@ -18,6 +18,7 @@ jobs:
           bash tests/socks5_global_zz_test.sh
           bash tests/socks5_nonglobal_test.sh
           bash tests/rule_list_test.sh
+          bash tests/set_egress_test.sh
       - name: Install Reality without a domain
         run: sudo JIUHEYI_REALITY_DOMAIN=www.apple.com bash "$GITHUB_WORKSPACE/install.sh"
       - name: Check the result
