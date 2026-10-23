@@ -6,7 +6,7 @@
 # 联合安装 AimiliVPN 时，出站为 127.0.0.1:8500。账号读 /opt/aimilivpn/vpngate_data/proxy_auth.json，没有就用 socks5 / ilovestudy。
 # 检测区
 # -------------------------------------------------------------
-jiuheyi_version="V1.1.15"
+jiuheyi_version="V1.1.16"
 # 检查系统
 export LANG=en_US.UTF-8
 
@@ -8265,6 +8265,50 @@ jiuheyiRemoveSocks5Outbound() {
     fi
 }
 
+# AimiliVPN 安装/卸载时不进菜单调用：JIUHEYI_SET_EGRESS=direct 与菜单 11「卸载Socks5出站」相同，
+# 再按 direct 重写 DNS（保留 queryStrategy、补 Reality 回环），重启内核；=global 出口改为 AimiliVPN 8500。
+# 成功返回 0；配置里还有 8500 出站、或 sing-box 合并失败返回非 0。
+jiuheyiSetEgress() {
+    local mode=$1
+    [[ -d /etc/v2ray-agent ]] || { echoContent red " ---> 未安装九合一"; return 2; }
+    readInstallType >/dev/null 2>&1 || true
+    case "${mode}" in
+    direct)
+        export JIUHEYI_EGRESS=
+        jiuheyiRemoveSocks5Outbound || return 1
+        jiuheyiApplyDnsMode direct || return 1
+        ;;
+    global)
+        export JIUHEYI_EGRESS=aimili
+        jiuheyiApplyDnsMode global || return 1
+        if [[ -d /etc/v2ray-agent/sing-box/conf/config ]]; then
+            installAimiliDefaultOutbound
+            rm -f /etc/v2ray-agent/sing-box/conf/config/socks5_01_outbound_route.json
+        fi
+        ;;
+    *)
+        echoContent red " ---> JIUHEYI_SET_EGRESS 只支持 direct 或 global"
+        return 2
+        ;;
+    esac
+    # 与菜单一样 reloadCore；放进子 shell，内核起不来时 handleXray/handleSingBox 的 exit 0 不会让这里当成成功。
+    (reloadCore) >/dev/null 2>&1 || true
+    if [[ -f /etc/systemd/system/xray.service || -f /etc/init.d/xray ]] && [[ "${coreInstallType}" == "1" ]] && [[ -z $(pgrep -f "xray/xray") ]]; then
+        echoContent red " ---> Xray 启动失败"
+        return 1
+    fi
+    if [[ -f /etc/systemd/system/sing-box.service || -f /etc/init.d/sing-box ]] && [[ -n "${singBoxConfigPath}" ]] && [[ -z $(pgrep -f "sing-box") ]]; then
+        echoContent red " ---> sing-box 启动失败"
+        return 1
+    fi
+    if [[ "${mode}" == "direct" ]] && grep -rqs --include='*.json' '127.0.0.1.\{0,8\}8500\|"server_port": *8500\|"port": *8500' /etc/v2ray-agent/xray/conf /etc/v2ray-agent/sing-box/conf 2>/dev/null; then
+        echoContent red " ---> 仍有 8500 出站"
+        return 1
+    fi
+    echoContent green " ---> 九合一出口已改为 ${mode}"
+    return 0
+}
+
 # 卸载Socks5分流
 removeSocks5Routing() {
     echoContent skyBlue "\n功能 1/1 : 卸载Socks5分流"
@@ -12111,6 +12155,10 @@ jiuheyiOneClick() {
 
 
 cronFunction
+if [[ -n "${JIUHEYI_SET_EGRESS:-}" ]]; then
+    jiuheyiSetEgress "${JIUHEYI_SET_EGRESS}"
+    exit $?
+fi
 if [[ "${JIUHEYI_REPAIR_ONLY:-}" == "1" ]]; then
     jiuheyiRepairAfterUpdate
     exit 0
