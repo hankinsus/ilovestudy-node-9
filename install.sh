@@ -6,7 +6,11 @@
 # 联合安装 AimiliVPN 时，出站为 127.0.0.1:8500。账号读 /opt/aimilivpn/vpngate_data/proxy_auth.json，没有就用 socks5 / ilovestudy。
 # 检测区
 # -------------------------------------------------------------
-jiuheyi_version="V1.1.16"
+jiuheyi_version="V1.1.17"
+# V1.1.17：Xray 版本锁。新版 Xray（26.9.9 起）的 Reality 服务端拒绝不带 X25519MLKEM768 的客户端（小火箭、sing-box、mihomo 等），
+# 26.7.11 起还删掉 VMess none/zero。默认锁在 v26.3.27；环境变量 XRAY_VERSION 可覆盖（如 XRAY_VERSION=v26.7.28）；
+# 设成 latest 则恢复原来的“取 GitHub 最新稳定版”。安装、升级、菜单 18 更新脚本都遵守这个锁。
+XRAY_PINNED_VERSION="v26.3.27"
 # 检查系统
 export LANG=en_US.UTF-8
 
@@ -2507,7 +2511,7 @@ installXray() {
         if [[ "${prereleaseStatus}" == "true" ]]; then
             version=$(curl -s "https://api.github.com/repos/XTLS/Xray-core/releases?per_page=5" | jq -r ".[]|select (.prerelease==${prereleaseStatus})|.tag_name" | head -1)
         else
-            version=$(jiuheyiLatestTag XTLS/Xray-core)
+            version=$(jiuheyiXrayTargetTag)
         fi
 
         echoContent green " ---> Xray-core版本:${version}"
@@ -2592,14 +2596,15 @@ xrayVersionManageMenu() {
         prereleaseStatus=true
         updateXray
     elif [[ "${selectXrayType}" == "3" ]]; then
-        echoContent yellow "\n1.只可以回退最近的五个版本"
+        echoContent yellow "\n1.列表第一项为锁定版本（如有），其后是最近的稳定版"
         echoContent yellow "2.不保证回退后一定可以正常使用"
         echoContent yellow "3.如果回退的版本不支持当前的config，则会无法连接，谨慎操作"
         echoContent skyBlue "------------------------Version-------------------------------"
-        curl -s "https://api.github.com/repos/XTLS/Xray-core/releases?per_page=5" | jq -r ".[]|select (.prerelease==false)|.tag_name" | awk '{print ""NR""":"$0}'
+        if jiuheyiXrayIsPinned; then echoContent green " ---> 第 1 项是锁定版本 $(jiuheyiXrayTargetTag)（小火箭 Reality、VMess none 可用）"; fi
+        jiuheyiXrayRollbackList | awk '{print ""NR""":"$0}'
         echoContent skyBlue "--------------------------------------------------------------"
         read -r -p "请输入要回退的版本:" selectXrayVersionType
-        version=$(curl -s "https://api.github.com/repos/XTLS/Xray-core/releases?per_page=5" | jq -r ".[]|select (.prerelease==false)|.tag_name" | awk '{print ""NR""":"$0}' | grep "${selectXrayVersionType}:" | awk -F "[:]" '{print $2}')
+        version=$(jiuheyiXrayRollbackList | awk '{print ""NR""":"$0}' | grep "^${selectXrayVersionType}:" | awk -F "[:]" '{print $2}')
         if [[ -n "${version}" ]]; then
             updateXray "${version}"
         else
@@ -2652,7 +2657,7 @@ updateXray() {
         if [[ "${prereleaseStatus}" == "true" ]]; then
             version=$(curl -s "https://api.github.com/repos/XTLS/Xray-core/releases?per_page=5" | jq -r ".[]|select (.prerelease==${prereleaseStatus})|.tag_name" | head -1)
         else
-            version=$(jiuheyiLatestTag XTLS/Xray-core)
+            version=$(jiuheyiXrayTargetTag)
         fi
 
         if [[ -n "$1" ]]; then
@@ -2678,10 +2683,14 @@ updateXray() {
         if [[ "${prereleaseStatus}" == "true" ]]; then
             remoteVersion=$(curl -s "https://api.github.com/repos/XTLS/Xray-core/releases?per_page=5" | jq -r ".[]|select (.prerelease==${prereleaseStatus})|.tag_name" | head -1)
         else
-            remoteVersion=$(jiuheyiLatestTag XTLS/Xray-core)
+            remoteVersion=$(jiuheyiXrayTargetTag)
         fi
 
-        echoContent green " ---> 最新版本:${remoteVersion}"
+        if [[ "${prereleaseStatus}" != "true" ]] && jiuheyiXrayIsPinned; then
+            echoContent green " ---> 锁定版本:${remoteVersion}（XRAY_VERSION=latest 可解除）"
+        else
+            echoContent green " ---> 最新版本:${remoteVersion}"
+        fi
 
         if [[ -n "$1" ]]; then
             version=$1
@@ -6617,12 +6626,20 @@ jiuheyiUpdateInstalledCores() {
     [[ -n $(pgrep -f "sing-box/sing-box" || true) ]] && was_sing=1
 
     if [[ -x /etc/v2ray-agent/xray/xray && -n "${xrayCoreCPUVendor}" ]]; then
-        version=$(jiuheyiLatestTag XTLS/Xray-core)
+        version=$(jiuheyiXrayTargetTag)
         current="v$(/etc/v2ray-agent/xray/xray --version | awk '{print $2}' | head -1)"
         if [[ -z "${version}" || "${version}" == "${current}" ]]; then
-            echoContent green " ---> Xray 已是最新 ${current}"
+            if jiuheyiXrayIsPinned; then
+                echoContent green " ---> Xray 已是锁定版本 ${current}"
+            else
+                echoContent green " ---> Xray 已是最新 ${current}"
+            fi
         else
-            echoContent yellow " ---> 更新 Xray ${current} -> ${version}"
+            if jiuheyiXrayIsPinned; then
+                echoContent yellow " ---> Xray 版本已锁定 ${version}，调整 ${current} -> ${version}"
+            else
+                echoContent yellow " ---> 更新 Xray ${current} -> ${version}"
+            fi
             [[ "${was_xray}" == "1" ]] && handleXray stop
             if wget -q ${wgetShowProgressStatus} -O "/etc/v2ray-agent/xray/${xrayCoreCPUVendor}.zip" "https://github.com/XTLS/Xray-core/releases/download/${version}/${xrayCoreCPUVendor}.zip" && [[ -s "/etc/v2ray-agent/xray/${xrayCoreCPUVendor}.zip" ]]; then
                 unzip -o "/etc/v2ray-agent/xray/${xrayCoreCPUVendor}.zip" -d /etc/v2ray-agent/xray >/dev/null
@@ -9123,6 +9140,30 @@ jiuheyiLatestTag() {
         tag=$(curl -sIL --max-time 20 -o /dev/null -w '%{url_effective}' "https://github.com/${repo}/releases/latest" | sed -n 's#.*/releases/tag/##p')
     fi
     echo "${tag}"
+}
+# V1.1.17：Xray 目标版本。XRAY_VERSION（环境变量）优先，其次 XRAY_PINNED_VERSION；空值或 latest 走 jiuheyiLatestTag。
+jiuheyiXrayTargetTag() {
+    local want="${XRAY_VERSION:-${XRAY_PINNED_VERSION:-}}"
+    want="${want//[[:space:]]/}"
+    if [[ -z "${want}" || "${want,,}" == "latest" ]]; then
+        jiuheyiLatestTag XTLS/Xray-core
+        return
+    fi
+    [[ "${want}" =~ ^[0-9] ]] && want="v${want}"
+    echo "${want}"
+}
+# 当前是否锁定了 Xray 版本（返回 0=已锁，1=跟随 latest）
+jiuheyiXrayIsPinned() {
+    local want="${XRAY_VERSION:-${XRAY_PINNED_VERSION:-}}"
+    want="${want//[[:space:]]/}"
+    [[ -n "${want}" && "${want,,}" != "latest" ]]
+}
+# 回退菜单的版本列表：锁定版本排第一，后面接 GitHub 最近的稳定版（去重）
+jiuheyiXrayRollbackList() {
+    {
+        if jiuheyiXrayIsPinned; then jiuheyiXrayTargetTag; fi
+        curl -s --max-time 20 "https://api.github.com/repos/XTLS/Xray-core/releases?per_page=5" | jq -r ".[]|select (.prerelease==false)|.tag_name" 2>/dev/null
+    } | awk 'NF && !seen[$0]++'
 }
 jiuheyiRestoreAimiliNginx() {
     [[ -f /etc/nginx/conf.d/aimilivpn-production.conf ]] || return 0

@@ -64,6 +64,15 @@ VLESS+Vision+TCP、VLESS+TLS+WS、VMess+TLS+WS、Trojan+TLS、Hysteria2、VLESS+
 
 已经装好的机器：执行一次 `vasma`。只有策略或保活还是旧的，才会重载一次 Xray 或 sing-box。11 里的分流规则不会被改。
 
+## Xray 版本锁（V1.1.17）
+
+Xray 26.9.9 起，Reality 服务端拒绝不带 X25519MLKEM768 的客户端（小火箭、sing-box、mihomo 等连不上 vless_reality_vision 和 Reality_XHTTP），26.7.11 起还删掉了 VMess none。所以脚本现在默认把 Xray 锁在 **v26.3.27**：
+
+- 安装、菜单里的“升级 Xray-core”、菜单 18“更新脚本”都只到锁定版本，不再自动升到 latest。机器上已经是更新的版本，菜单 18 会把它调回锁定版本。
+- “回退 Xray-core”菜单的第 1 项是锁定版本。
+- 换版本：`XRAY_VERSION=v26.7.28 bash install.sh`（环境变量优先）。要恢复跟随最新稳定版：`XRAY_VERSION=latest`。
+- 菜单 2“升级 Xray-core 预览版”是手动选的，不受锁影响。
+
 ## DNS
 
 菜单 **19** 可以选解析方式，默认是 IPv4 和 IPv6 同时，IPv4 优先：
