@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# V1.1.17：Xray 版本锁。默认 v26.3.27；XRAY_VERSION 覆盖；latest 走原来的取最新逻辑；不再有任何地方直接取 Xray 的 latest。
+# V1.1.18：Xray 版本锁。默认 v26.3.27；XRAY_VERSION 覆盖；latest 走原来的取最新逻辑；不再有任何地方直接取 Xray 的 latest。
 # shellcheck disable=SC2034
 set -e
 cd "$(dirname "$0")/.."
 fail() { echo "FAIL $*"; exit 1; }
 
 # 1. 版本号与锁定变量
-grep -q '^jiuheyi_version="V1.1.17"' install.sh || fail "version not V1.1.17"
+grep -q '^jiuheyi_version="V1.1.18"' install.sh || fail "version not V1.1.18"
 grep -q '^XRAY_PINNED_VERSION="v26.3.27"' install.sh || fail "XRAY_PINNED_VERSION missing"
 
 # 2. 取 Xray 版本的地方都走 jiuheyiXrayTargetTag；只有函数自己能调 jiuheyiLatestTag XTLS/Xray-core

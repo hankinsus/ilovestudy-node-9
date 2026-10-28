@@ -6,7 +6,9 @@
 # 联合安装 AimiliVPN 时，出站为 127.0.0.1:8500。账号读 /opt/aimilivpn/vpngate_data/proxy_auth.json，没有就用 socks5 / ilovestudy。
 # 检测区
 # -------------------------------------------------------------
-jiuheyi_version="V1.1.17"
+jiuheyi_version="V1.1.18"
+# V1.1.18：VMess 订阅/分享链接加标准加密字段 scy=aes-128-gcm（vmess JSON scy、Clash cipher、sing-box security），旧字段 method/aid 保留；
+# 链接和订阅里的 fp 一直是 chrome，不改（chrome140 不是 Xray 标准值，其它客户端会报错；小火箭是否认它没验证），菜单和订阅提示里加小火箭设置说明。服务端入站不用改。
 # V1.1.17：Xray 版本锁。新版 Xray（26.9.9 起）的 Reality 服务端拒绝不带 X25519MLKEM768 的客户端（小火箭、sing-box、mihomo 等），
 # 26.7.11 起还删掉 VMess none/zero。默认锁在 v26.3.27；环境变量 XRAY_VERSION 可覆盖（如 XRAY_VERSION=v26.7.28）；
 # 设成 latest 则恢复原来的“取 GitHub 最新稳定版”。安装、升级、菜单 18 更新脚本都遵守这个锁。
@@ -5115,6 +5117,18 @@ EOF
 initSubscribeLocalConfig() {
     rm -rf /etc/v2ray-agent/subscribe_local/sing-box/*
 }
+# 小火箭（Shadowrocket）说明：新版 Xray 的 Reality 要求客户端握手带后量子密钥；链接里的 fp 已经是 chrome（服务端没有开关能放宽）。
+# $1=vmess 提示 VMess 算法；$1=reality 提示 TLS 指纹。只提示，不改链接。
+jiuheyiShadowrocketTip() {
+    case "$1" in
+    vmess)
+        echoContent yellow " ---> 小火箭用户：VMess 节点的「算法」请选 aes-128-gcm（链接里已带 scy=aes-128-gcm，没带上时手动选；不要选 none）\n"
+        ;;
+    reality)
+        echoContent yellow " ---> 小火箭用户：Reality 节点连不上时，设置→TCP→指纹选 Chrome140；再点节点右侧(i)→TLS→指纹也选 Chrome140（链接里 fp=chrome 是标准写法；小火箭是否按它自动选指纹没有验证，以手动选 Chrome140 为准）\n"
+        ;;
+    esac
+}
 # 通用
 defaultBase64Code() {
     local type=$1
@@ -5156,13 +5170,14 @@ EOF
 
 
     elif [[ "${type}" == "vmessws" ]]; then
-        qrCodeBase64Default=$(echo -n "{\"port\":${port},\"ps\":\"${email}\",\"tls\":\"tls\",\"id\":\"${id}\",\"aid\":0,\"v\":2,\"host\":\"${currentHost}\",\"type\":\"none\",\"path\":\"${path}\",\"net\":\"ws\",\"add\":\"${add}\",\"method\":\"none\",\"peer\":\"${currentHost}\",\"sni\":\"${currentHost}\"}" | base64 -w 0)
+        qrCodeBase64Default=$(echo -n "{\"port\":${port},\"ps\":\"${email}\",\"tls\":\"tls\",\"id\":\"${id}\",\"aid\":0,\"scy\":\"aes-128-gcm\",\"v\":2,\"host\":\"${currentHost}\",\"type\":\"none\",\"path\":\"${path}\",\"net\":\"ws\",\"add\":\"${add}\",\"method\":\"none\",\"peer\":\"${currentHost}\",\"sni\":\"${currentHost}\"}" | base64 -w 0)
         qrCodeBase64Default="${qrCodeBase64Default// /}"
 
         echoContent yellow " ---> 通用json(VMess+WS+TLS)"
-        echoContent green "    {\"port\":${port},\"ps\":\"${email}\",\"tls\":\"tls\",\"id\":\"${id}\",\"aid\":0,\"v\":2,\"host\":\"${currentHost}\",\"type\":\"none\",\"path\":\"${path}\",\"net\":\"ws\",\"add\":\"${add}\",\"method\":\"none\",\"peer\":\"${currentHost}\",\"sni\":\"${currentHost}\"}\n"
+        echoContent green "    {\"port\":${port},\"ps\":\"${email}\",\"tls\":\"tls\",\"id\":\"${id}\",\"aid\":0,\"scy\":\"aes-128-gcm\",\"v\":2,\"host\":\"${currentHost}\",\"type\":\"none\",\"path\":\"${path}\",\"net\":\"ws\",\"add\":\"${add}\",\"method\":\"none\",\"peer\":\"${currentHost}\",\"sni\":\"${currentHost}\"}\n"
         echoContent yellow " ---> 通用vmess(VMess+WS+TLS)链接"
         echoContent green "    vmess://${qrCodeBase64Default}\n"
+        jiuheyiShadowrocketTip vmess
         echoContent yellow " ---> 二维码 vmess(VMess+WS+TLS)"
 
         cat <<EOF >>"/etc/v2ray-agent/subscribe_local/default/${user}"
@@ -5175,7 +5190,7 @@ EOF
     port: ${port}
     uuid: ${id}
     alterId: 0
-    cipher: none
+    cipher: aes-128-gcm
     udp: true
     tls: true
     client-fingerprint: chrome
@@ -5186,7 +5201,7 @@ EOF
       headers:
         Host: ${currentHost}
 EOF
-        singBoxSubscribeLocalConfig=$(jq -r ". += [{\"tag\":\"${email}\",\"type\":\"vmess\",\"server\":\"${add}\",\"server_port\":${port},\"uuid\":\"${id}\",\"alter_id\":0,\"tls\":{\"enabled\":true,\"server_name\":\"${currentHost}\",\"utls\":{\"enabled\":true,\"fingerprint\":\"chrome\"}},\"packet_encoding\":\"packetaddr\",\"transport\":{\"type\":\"ws\",\"path\":\"${path}\",\"max_early_data\":2048,\"early_data_header_name\":\"Sec-WebSocket-Protocol\"}}]" "/etc/v2ray-agent/subscribe_local/sing-box/${user}")
+        singBoxSubscribeLocalConfig=$(jq -r ". += [{\"tag\":\"${email}\",\"type\":\"vmess\",\"server\":\"${add}\",\"server_port\":${port},\"uuid\":\"${id}\",\"security\":\"aes-128-gcm\",\"alter_id\":0,\"tls\":{\"enabled\":true,\"server_name\":\"${currentHost}\",\"utls\":{\"enabled\":true,\"fingerprint\":\"chrome\"}},\"packet_encoding\":\"packetaddr\",\"transport\":{\"type\":\"ws\",\"path\":\"${path}\",\"max_early_data\":2048,\"early_data_header_name\":\"Sec-WebSocket-Protocol\"}}]" "/etc/v2ray-agent/subscribe_local/sing-box/${user}")
 
         echo "${singBoxSubscribeLocalConfig}" | jq . >"/etc/v2ray-agent/subscribe_local/sing-box/${user}"
 
@@ -5227,6 +5242,7 @@ EOF
 
         echoContent yellow " ---> 通用格式(VLESS+reality+XHTTP)"
         echoContent green "    vless://${id}@${add}:${port}?encryption=none&security=reality&type=xhttp&sni=${xrayVLESSRealityXHTTPServerName}&host=${xrayVLESSRealityXHTTPServerName}&fp=chrome&path=${path}&pbk=${currentRealityXHTTPPublicKey}&sid=6ba85179e30d4fc2#${email}\n"
+        jiuheyiShadowrocketTip reality
 
         echoContent yellow " ---> 格式化明文(VLESS+reality+XHTTP)"
         echoContent green "协议类型:VLESS reality，地址:${add}，publicKey:${currentRealityXHTTPPublicKey}，shortId: 6ba85179e30d4fc2,serverNames：${xrayVLESSRealityXHTTPServerName}，端口:${port}，路径：${path}，SNI:${xrayVLESSRealityXHTTPServerName}，伪装域名:${xrayVLESSRealityXHTTPServerName}，用户ID:${id}，传输方式:xhttp，账户名:${email}\n"
@@ -5390,6 +5406,7 @@ EOF
         fi
         echoContent yellow " ---> 通用格式(VLESS+reality+uTLS+Vision)"
         echoContent green "    vless://${id}@$(getPublicIP):${port}?${realityQuery}#${email}\n"
+        jiuheyiShadowrocketTip reality
 
         echoContent yellow " ---> 格式化明文(VLESS+reality+uTLS+Vision)"
         echoContent green "协议类型:VLESS reality，地址:$(getPublicIP)，publicKey:${publicKey}，shortId: 6ba85179e30d4fc2，pqv=${realityMldsa65Verify}，serverNames：${realityServerName}，端口:${port}，用户ID:${id}，传输方式:tcp，账户名:${email}\n"
@@ -5430,6 +5447,7 @@ EOF
         echoContent yellow " ---> 通用格式(VLESS+reality+uTLS+gRPC)"
         # pqv=${realityMldsa65Verify}&
         echoContent green "    vless://${id}@$(getPublicIP):${port}?encryption=none&security=reality&type=grpc&sni=${realityServerName}&fp=chrome&pbk=${publicKey}&sid=6ba85179e30d4fc2&path=grpc&serviceName=grpc#${email}\n"
+        jiuheyiShadowrocketTip reality
 
         echoContent yellow " ---> 格式化明文(VLESS+reality+uTLS+gRPC)"
         # pqv=${realityMldsa65Verify}，
@@ -5505,13 +5523,14 @@ EOF
 naive+https://${email}:${id}@${currentHost}:${port}?padding=true#${email}
 EOF
     elif [[ "${type}" == "vmessHTTPUpgrade" ]]; then
-        qrCodeBase64Default=$(echo -n "{\"port\":${port},\"ps\":\"${email}\",\"tls\":\"tls\",\"id\":\"${id}\",\"aid\":0,\"v\":2,\"host\":\"${currentHost}\",\"type\":\"none\",\"path\":\"${path}\",\"net\":\"httpupgrade\",\"add\":\"${add}\",\"method\":\"none\",\"peer\":\"${currentHost}\",\"sni\":\"${currentHost}\"}" | base64 -w 0)
+        qrCodeBase64Default=$(echo -n "{\"port\":${port},\"ps\":\"${email}\",\"tls\":\"tls\",\"id\":\"${id}\",\"aid\":0,\"scy\":\"aes-128-gcm\",\"v\":2,\"host\":\"${currentHost}\",\"type\":\"none\",\"path\":\"${path}\",\"net\":\"httpupgrade\",\"add\":\"${add}\",\"method\":\"none\",\"peer\":\"${currentHost}\",\"sni\":\"${currentHost}\"}" | base64 -w 0)
         qrCodeBase64Default="${qrCodeBase64Default// /}"
 
         echoContent yellow " ---> 通用json(VMess+HTTPUpgrade+TLS)"
-        echoContent green "    {\"port\":${port},\"ps\":\"${email}\",\"tls\":\"tls\",\"id\":\"${id}\",\"aid\":0,\"v\":2,\"host\":\"${currentHost}\",\"type\":\"none\",\"path\":\"${path}\",\"net\":\"httpupgrade\",\"add\":\"${add}\",\"method\":\"none\",\"peer\":\"${currentHost}\",\"sni\":\"${currentHost}\"}\n"
+        echoContent green "    {\"port\":${port},\"ps\":\"${email}\",\"tls\":\"tls\",\"id\":\"${id}\",\"aid\":0,\"scy\":\"aes-128-gcm\",\"v\":2,\"host\":\"${currentHost}\",\"type\":\"none\",\"path\":\"${path}\",\"net\":\"httpupgrade\",\"add\":\"${add}\",\"method\":\"none\",\"peer\":\"${currentHost}\",\"sni\":\"${currentHost}\"}\n"
         echoContent yellow " ---> 通用vmess(VMess+HTTPUpgrade+TLS)链接"
         echoContent green "    vmess://${qrCodeBase64Default}\n"
+        jiuheyiShadowrocketTip vmess
         echoContent yellow " ---> 二维码 vmess(VMess+HTTPUpgrade+TLS)"
 
         cat <<EOF >>"/etc/v2ray-agent/subscribe_local/default/${user}"
@@ -5524,7 +5543,7 @@ EOF
     port: ${port}
     uuid: ${id}
     alterId: 0
-    cipher: auto
+    cipher: aes-128-gcm
     udp: true
     tls: true
     client-fingerprint: chrome
@@ -5536,7 +5555,7 @@ EOF
        Host: ${currentHost}
      v2ray-http-upgrade: true
 EOF
-        singBoxSubscribeLocalConfig=$(jq -r ". += [{\"tag\":\"${email}\",\"type\":\"vmess\",\"server\":\"${add}\",\"server_port\":${port},\"uuid\":\"${id}\",\"security\":\"auto\",\"alter_id\":0,\"tls\":{\"enabled\":true,\"server_name\":\"${currentHost}\",\"utls\":{\"enabled\":true,\"fingerprint\":\"chrome\"}},\"packet_encoding\":\"packetaddr\",\"transport\":{\"type\":\"httpupgrade\",\"path\":\"${path}\"}}]" "/etc/v2ray-agent/subscribe_local/sing-box/${user}")
+        singBoxSubscribeLocalConfig=$(jq -r ". += [{\"tag\":\"${email}\",\"type\":\"vmess\",\"server\":\"${add}\",\"server_port\":${port},\"uuid\":\"${id}\",\"security\":\"aes-128-gcm\",\"alter_id\":0,\"tls\":{\"enabled\":true,\"server_name\":\"${currentHost}\",\"utls\":{\"enabled\":true,\"fingerprint\":\"chrome\"}},\"packet_encoding\":\"packetaddr\",\"transport\":{\"type\":\"httpupgrade\",\"path\":\"${path}\"}}]" "/etc/v2ray-agent/subscribe_local/sing-box/${user}")
 
         echo "${singBoxSubscribeLocalConfig}" | jq . >"/etc/v2ray-agent/subscribe_local/sing-box/${user}"
 
@@ -10196,6 +10215,10 @@ subscribe() {
                 fi
 
             done
+            if [[ -z "${showStatus}" ]]; then
+                jiuheyiShadowrocketTip vmess
+                jiuheyiShadowrocketTip reality
+            fi
         fi
     else
         echoContent red " ---> 未安装伪装站点，无法使用订阅服务"

@@ -73,6 +73,13 @@ Xray 26.9.9 起，Reality 服务端拒绝不带 X25519MLKEM768 的客户端（�
 - 换版本：`XRAY_VERSION=v26.7.28 bash install.sh`（环境变量优先）。要恢复跟随最新稳定版：`XRAY_VERSION=latest`。
 - 菜单 2“升级 Xray-core 预览版”是手动选的，不受锁影响。
 
+## VMess 加密算法与小火箭（V1.1.18）
+
+- 脚本生成的 VMess 链接和订阅现在都带明确的加密算法 **aes-128-gcm**：vmess:// 链接 JSON 里有 `"scy":"aes-128-gcm"`，Clash 订阅 `cipher: aes-128-gcm`，sing-box 订阅 `"security":"aes-128-gcm"`。旧字段（`aid:0`、`method:none` 等）保留，服务端入站不用改（VMess 的加密由客户端决定，服务端都认）。
+- VLESS / Reality / Trojan 的指纹（链接 `fp=`、Clash `client-fingerprint`、sing-box `utls.fingerprint`）一直是 `chrome`，没有改。`chrome140` 不是 Xray 标准写法，v2rayN、sing-box 等客户端不认，所以没往订阅里写。
+- 服务端没有开关能让 Reality 接受不带后量子密钥的客户端（Xray 26.9.8 起 REALITY 服务端强制），所以脚本继续锁 Xray v26.3.27。以后解锁到新版内核，小火箭要手动选指纹：**设置 → TCP → 指纹 → Chrome140**；再点节点右侧 (i) → **TLS → 指纹 → Chrome140**。VMess 节点的“算法”选 **aes-128-gcm**。
+- 菜单里显示节点信息和订阅时会打印这几句提示。
+
 ## DNS
 
 菜单 **19** 可以选解析方式，默认是 IPv4 和 IPv6 同时，IPv4 优先：
