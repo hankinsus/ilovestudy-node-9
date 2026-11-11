@@ -6,7 +6,8 @@
 # 联合安装 AimiliVPN 时，出站为 127.0.0.1:8500。账号读 /opt/aimilivpn/vpngate_data/proxy_auth.json，没有就用 socks5 / ilovestudy。
 # 检测区
 # -------------------------------------------------------------
-jiuheyi_version="V1.1.18"
+jiuheyi_version="V1.1.19"
+# V1.1.19：菜单 19 DNS模式放到 18 后面。编号没改，选择仍是 19。
 # V1.1.18：VMess 订阅/分享链接加标准加密字段 scy=aes-128-gcm（vmess JSON scy、Clash cipher、sing-box security），旧字段 method/aid 保留；
 # 链接和订阅里的 fp 一直是 chrome，不改（chrome140 不是 Xray 标准值，其它客户端会报错；小火箭是否认它没验证），菜单和订阅提示里加小火箭设置说明。服务端入站不用改。
 # V1.1.17：Xray 版本锁。新版 Xray（26.9.9 起）的 Reality 服务端拒绝不带 X25519MLKEM768 的客户端（小火箭、sing-box、mihomo 等），
@@ -10887,7 +10888,6 @@ menu() {
     echoContent yellow "9.证书管理"
     echoContent yellow "10.CDN节点管理"
     echoContent yellow "11.分流工具"
-    echoContent yellow "19.DNS模式"
     echoContent yellow "12.添加新端口"
     echoContent yellow "13.BT下载管理"
     echoContent yellow "15.规则列表"
@@ -10895,6 +10895,7 @@ menu() {
     echoContent yellow "16.core管理"
     echoContent yellow "17.安装BBR、DD脚本"
     echoContent yellow "18.更新脚本和内核"
+    echoContent yellow "19.DNS模式"
     echoContent skyBlue "-------------------------脚本管理-----------------------------"
     echoContent yellow "30.卸载脚本"
     echoContent red "=============================================================="
